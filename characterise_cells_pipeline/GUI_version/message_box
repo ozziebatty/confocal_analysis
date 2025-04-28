@@ -1,0 +1,279 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+import threading
+import time
+from datetime import datetime
+
+class ProgressDialog:
+    def __init__(self, parent, title, total_images):
+        self.parent = parent
+        self.total_images = total_images
+        self.current_image = 0
+        self.cancelled = False
+        
+        # Create a new top-level window
+        self.root = tk.Toplevel(parent)
+        self.root.title(title)
+        self.root.geometry("500x320")
+        self.root.resizable(False, False)
+        self.root.transient(parent)  # Make dialog modal
+        self.root.grab_set()  # Make dialog modal
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)  # Handle window close
+        
+        # Create widgets
+        main_frame = ttk.Frame(self.root, padding="20")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Overall image progress
+        ttk.Label(main_frame, text="Overall Progress:").grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
+        self.image_progress_text = ttk.Label(main_frame, text=f"Image 0/{self.total_images}")
+        self.image_progress_text.grid(row=0, column=1, sticky=tk.E, pady=(0, 5))
+        
+        self.image_progress = ttk.Progressbar(main_frame, length=460, mode="determinate", maximum=self.total_images)
+        self.image_progress.grid(row=1, column=0, columnspan=2, sticky=tk.EW, pady=(0, 15))
+        
+        # Preprocessing progress
+        ttk.Label(main_frame, text="Preprocessing:").grid(row=2, column=0, sticky=tk.W, pady=(0, 5))
+        self.preprocess_text = ttk.Label(main_frame, text="0%")
+        self.preprocess_text.grid(row=2, column=1, sticky=tk.E, pady=(0, 5))
+        
+        self.preprocess_progress = ttk.Progressbar(main_frame, length=460, mode="determinate", maximum=100)
+        self.preprocess_progress.grid(row=3, column=0, columnspan=2, sticky=tk.EW, pady=(0, 10))
+        
+        # Segmentation progress
+        ttk.Label(main_frame, text="Segmentation:").grid(row=4, column=0, sticky=tk.W, pady=(0, 5))
+        self.segment_text = ttk.Label(main_frame, text="0%")
+        self.segment_text.grid(row=4, column=1, sticky=tk.E, pady=(0, 5))
+        
+        self.segment_progress = ttk.Progressbar(main_frame, length=460, mode="determinate", maximum=100)
+        self.segment_progress.grid(row=5, column=0, columnspan=2, sticky=tk.EW, pady=(0, 10))
+        
+        # Analysis progress
+        ttk.Label(main_frame, text="Analysis:").grid(row=6, column=0, sticky=tk.W, pady=(0, 5))
+        self.analysis_text = ttk.Label(main_frame, text="0%")
+        self.analysis_text.grid(row=6, column=1, sticky=tk.E, pady=(0, 5))
+        
+        self.analysis_progress = ttk.Progressbar(main_frame, length=460, mode="determinate", maximum=100)
+        self.analysis_progress.grid(row=7, column=0, columnspan=2, sticky=tk.EW, pady=(0, 10))
+        
+        # Status message
+        self.status_message = ttk.Label(main_frame, text="Starting processing...")
+        self.status_message.grid(row=8, column=0, columnspan=2, sticky=tk.W, pady=(10, 15))
+        
+        # Cancel button
+        self.cancel_button = ttk.Button(main_frame, text="Cancel", command=self.confirm_cancel)
+        self.cancel_button.grid(row=9, column=0, columnspan=2, pady=(0, 10))
+        
+    def update_image_progress(self, image_index, image_name=""):
+        """Update the overall image progress"""
+        self.current_image = image_index + 1
+        self.image_progress["value"] = self.current_image
+        self.image_progress_text.config(text=f"Image {self.current_image}/{self.total_images}")
+        if image_name:
+            self.status_message.config(text=f"Processing {image_name}...")
+        else:
+            self.status_message.config(text=f"Processing image {self.current_image}...")
+        
+        # Reset individual process progress bars for new image
+        self.reset_process_progress()
+        
+        # Update the UI immediately
+        self.root.update_idletasks()
+    
+    def reset_process_progress(self):
+        """Reset all process progress bars for a new image"""
+        self.preprocess_progress["value"] = 0
+        self.preprocess_text.config(text="0%")
+        self.segment_progress["value"] = 0  
+        self.segment_text.config(text="0%")
+        self.analysis_progress["value"] = 0
+        self.analysis_text.config(text="0%")
+        
+    def update_process_progress(self, process_name, percent):
+        """Update progress for a specific process"""
+        percent = min(100, max(0, percent))  # Ensure percent is between 0-100
+        
+        if process_name.lower() == "preprocessing":
+            self.preprocess_progress["value"] = percent
+            self.preprocess_text.config(text=f"{percent}%")
+            self.status_message.config(text=f"{datetime.now().strftime('%H:%M:%S')} - Preprocessing {percent}% complete")
+        elif process_name.lower() == "segmentation":
+            self.segment_progress["value"] = percent
+            self.segment_text.config(text=f"{percent}%")
+            self.status_message.config(text=f"{datetime.now().strftime('%H:%M:%S')} - Segmentation {percent}% complete")
+        elif process_name.lower() == "analysis":
+            self.analysis_progress["value"] = percent
+            self.analysis_text.config(text=f"{percent}%")
+            self.status_message.config(text=f"{datetime.now().strftime('%H:%M:%S')} - Analysis {percent}% complete")
+            
+        # Update the UI immediately
+        self.root.update_idletasks()
+        
+    def confirm_cancel(self):
+        """Show confirmation dialog before cancelling"""
+        if messagebox.askyesno("Cancel Processing", 
+                            "Are you sure you want to cancel?\nOnly fully processed images will be saved."):
+            self.cancelled = True
+            self.status_message.config(text="Cancelling... Please wait.")
+            self.cancel_button.config(state=tk.DISABLED)
+            
+    def is_cancelled(self):
+        """Check if processing was cancelled"""
+        return self.cancelled
+    
+    def on_closing(self):
+        """Handle window close button"""
+        self.confirm_cancel()
+        
+    def close(self):
+        """Close the dialog"""
+        self.root.grab_release()
+        self.root.destroy()
+
+def simulate_processing(root_window, selected_processes):
+    """Simulate image processing with timer-based progress updates"""
+    
+    # Simulate having 5 images to process
+    total_images = 5
+    
+    # Create progress dialog
+    progress_dialog = ProgressDialog(root_window, "Processing Images", total_images)
+    
+    print(f"Starting analysis with processes: {', '.join(selected_processes)}")
+    
+    try:
+        for i in range(total_images):
+            # Update image progress
+            image_name = f"Image_{i+1}.tiff"
+            progress_dialog.update_image_progress(i, image_name)
+            
+            # Run preprocessing if selected
+            if "Preprocessing" in selected_processes:
+                print(f"{datetime.now().strftime('%H:%M:%S')} - Starting preprocessing for {image_name}")
+                
+                # Simulate preprocessing steps
+                for step in range(101):
+                    if progress_dialog.is_cancelled():
+                        break
+                        
+                    # Update preprocessing progress
+                    progress_dialog.update_process_progress("Preprocessing", step)
+                    
+                    # Simulate processing time
+                    if step % 10 == 0:  # Speed up simulation by updating every 10%
+                        time.sleep(0.05)
+                        root_window.update()  # Allow UI to update
+                
+                print(f"{datetime.now().strftime('%H:%M:%S')} - Completed preprocessing for {image_name}")
+           
+            # Run segmentation if selected
+            if "Segmentation" in selected_processes:
+                print(f"{datetime.now().strftime('%H:%M:%S')} - Starting segmentation for {image_name}")
+                
+                # Simulate segmentation steps
+                for step in range(101):
+                    if progress_dialog.is_cancelled():
+                        break
+                        
+                    # Update segmentation progress
+                    progress_dialog.update_process_progress("Segmentation", step)
+                    
+                    # Simulate processing time
+                    if step % 5 == 0:  # Segmentation is typically slower, update more frequently
+                        time.sleep(0.1)
+                        root_window.update()  # Allow UI to update
+                
+                print(f"{datetime.now().strftime('%H:%M:%S')} - Completed segmentation for {image_name}")
+
+            # Run analysis if selected
+            if "Analysis" in selected_processes:
+                print(f"{datetime.now().strftime('%H:%M:%S')} - Starting analysis for {image_name}")
+                
+                # Simulate analysis steps
+                for step in range(101):
+                    if progress_dialog.is_cancelled():
+                        break
+                        
+                    # Update analysis progress
+                    progress_dialog.update_process_progress("Analysis", step)
+                    
+                    # Simulate processing time
+                    if step % 10 == 0:
+                        time.sleep(0.05)
+                        root_window.update()  # Allow UI to update
+                
+                print(f"{datetime.now().strftime('%H:%M:%S')} - Completed analysis for {image_name}")
+
+            # Check if processing was cancelled
+            if progress_dialog.is_cancelled():
+                break
+                
+            # Add a small delay between images
+            time.sleep(0.5)
+
+        # Display completion message
+        if progress_dialog.is_cancelled():
+            messagebox.showinfo("Processing Cancelled", "Processing was cancelled. Only fully processed images were saved.")
+        else:
+            messagebox.showinfo("Processing Complete", "All images have been processed successfully.")
+        
+    finally:
+        # Ensure dialog is closed even if an exception occurs
+        progress_dialog.close()
+
+def run_analysis():
+    """Main function to start the processing thread"""
+    # Get selected processes
+    selected_processes = [p for p, v in processes.items() if v.get()]
+    
+    if not selected_processes:
+        messagebox.showerror("Error", "Please select at least one process.")
+        return
+    
+    # Create and start a processing thread
+    processing_thread = threading.Thread(
+        target=simulate_processing,
+        args=(root, selected_processes)
+    )
+    processing_thread.daemon = True
+    processing_thread.start()
+
+def main():
+    global root, processes
+    
+    # Create main window
+    root = tk.Tk()
+    root.title("Image Analysis")
+    root.geometry("400x300")
+    
+    # Create main frame
+    frame = tk.Frame(root, padx=20, pady=20)
+    frame.pack(fill=tk.BOTH, expand=True)
+    
+    tk.Label(frame, text="Image Analysis", font=("Arial", 12, "bold")).pack(pady=10)
+    
+    # Process selection
+    processes_frame = tk.LabelFrame(frame, text="Select Processes")
+    processes_frame.pack(fill=tk.X, pady=10)
+    
+    processes = {
+        "Preprocessing": tk.BooleanVar(value=True),
+        "Segmentation": tk.BooleanVar(value=True),
+        "Analysis": tk.BooleanVar(value=True)
+    }
+    
+    for process, var in processes.items():
+        tk.Checkbutton(processes_frame, text=process, variable=var).pack(anchor="w", padx=10)
+    
+    # Buttons
+    button_frame = tk.Frame(frame)
+    button_frame.pack(pady=20)
+    
+    tk.Button(button_frame, text="Cancel", command=root.destroy, width=10).pack(side=tk.LEFT, padx=5)
+    tk.Button(button_frame, text="Start", command=run_analysis, width=10).pack(side=tk.LEFT, padx=5)
+    
+    # Run the main loop
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()

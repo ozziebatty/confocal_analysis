@@ -1,0 +1,45 @@
+print("Running")
+
+import tifffile
+import numpy as np
+from aicsimageio import AICSImage
+import napari
+
+# Load file + scene
+filepath = "/Users/oskar/Downloads/SBSO_OPP_NM.lif"
+input_path = '/Users/oskar/Desktop/format_test/SBSO_stellaris.tiff'
+
+image = tifffile.imread(input_path)
+
+
+print("Image loaded with shape (z, c, y, x):", image.shape, "dtype:", image.dtype)
+
+
+img = AICSImage(filepath)
+img.set_scene(66)
+
+# Get the image: shape will be (1, 5, 79, 523, 1487)
+data = img.get_image_data("TCZYX")  # Use full dims to avoid confusion
+
+# Convert to NumPy if needed
+data_np = data.compute() if hasattr(data, "compute") else data
+
+# Expand with a dummy Sample axis (S=1) → final shape (1, 79, 5, 523, 1487, 1)
+data_final = np.expand_dims(np.moveaxis(data_np, 1, 2), axis=-1)  # TCZYX → TZCYX → TZCYXS
+
+
+# Launch Napari
+#viewer = napari.Viewer()
+#viewer.add_image(data, name="Scene 66", channel_axis=0, colormap="gray")
+#napari.run()
+
+# Save to TIFF
+output_path = "/Users/oskar/Desktop/format_test/SBSO_image_2.tiff"
+tifffile.imwrite(
+    output_path,
+    data_final,
+    imagej=True,
+    metadata={"axes": "TZCYXS"}
+)
+
+print("Saved:", output_path)

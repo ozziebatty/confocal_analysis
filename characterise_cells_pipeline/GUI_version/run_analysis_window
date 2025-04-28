@@ -1,0 +1,348 @@
+print("Running")
+
+import os
+import numpy as np
+import tkinter as tk
+from tkinter import messagebox
+from datetime import datetime
+from skimage import img_as_ubyte
+from skimage.exposure import equalize_adapthist
+from skimage.filters import gaussian
+import tifffile
+from cellpose import models
+import pandas as pd
+import napari
+
+
+root = tk.Tk()
+
+loaded_project = True
+project_path = "/Users/oskar/Desktop/format_test"
+foldername = "/Users/oskar/Desktop/format_test"    
+
+# Load project parameters and check if segmentation is selected
+project_root = "/Users/oskar/Desktop/format_test"
+
+# Check if segmentation is selected from processes.csv
+processes_path = os.path.join(project_root, 'processes.csv')
+if os.path.exists(processes_path):
+    processes_df = pd.read_csv(processes_path)
+    segmentation_row = processes_df[processes_df['Process'] == 'Cellpose nuclear segmentation']
+    segmentation_selected = len(segmentation_row) > 0 and segmentation_row['Selected'].values[0] == 'Yes'
+else:
+    segmentation_selected = True  # Default to True if file doesn't exist
+
+# Load parameters from parameters_updated.csv
+parameters_path = os.path.join(project_root, 'parameters_updated.csv')
+if os.path.exists(parameters_path):
+    parameters_df = pd.read_csv(parameters_path)
+    
+    # Extract parameters with correct data type
+    params = {}
+    for _, row in parameters_df.iterrows():
+        param_name = row['Parameter']
+        param_value = row['Value']
+        data_type = row['Data type']
+        
+        if data_type == 'Float':
+            params[param_name] = float(param_value)
+        elif data_type == 'Integer':
+            params[param_name] = int(param_value)
+        else:
+            params[param_name] = param_value
+    
+    # Extract specific parameters with defaults
+    clahe_kernel_size = params.get('CLAHE_kernel_size', 64)
+    clahe_clip_limit = params.get('CLAHE_cliplimit', 0.01)
+    clahe_n_bins = params.get('CLAHE_n_bins', 256)
+    gaussian_kernel_size = params.get('gaussian_kernel_size', 3)
+    gaussian_sigma = params.get('gaussian_sigma', 1.0)
+    cell_diameter = params.get('cell_diameter', 30)
+    flow_threshold = params.get('flow_threshold', 0.5)
+    cellprob_threshold = params.get('cellprob_threshold', 0.1)
+    iou_threshold = params.get('iou_threshold', 0.5)
+else:
+    # Default parameters if file doesn't exist
+    clahe_kernel_size = 64
+    clahe_clip_limit = 0.01
+    clahe_n_bins = 256
+    gaussian_kernel_size = 3
+    gaussian_sigma = 1.0
+    cell_diameter = 30
+    flow_threshold = 0.5
+    cellprob_threshold = 0.1
+    iou_threshold = 0.5
+
+# Determine nuclear channel from channel_details.csv
+channel_path = os.path.join(project_root, 'channel_details.csv')
+nuclear_channel_idx = 0  # Default to first channel
+
+if os.path.exists(channel_path):
+    channel_df = pd.read_csv(channel_path)
+    nuclear_rows = channel_df[channel_df['Nuclear Channel'] == 'Yes']
+    
+    if len(nuclear_rows) > 0:
+        # Get the index from the row index (B2 -> index 0, B6 -> index 4)
+        # Assuming B2, B3, B4, etc. correspond to rows 1, 2, 3, etc.
+        nuclear_channel_idx = nuclear_rows.index[0]
+
+def apply_preprocessing(image):
+    """Apply Gaussian blur and CLAHE preprocessing to image"""
+    # Apply Gaussian blur
+    blurred = gaussian(image, sigma=gaussian_sigma, truncate=gaussian_kernel_size/2)
+    
+    # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+    preprocessed = img_as_ubyte(equalize_adapthist(
+        blurred, 
+        kernel_size=clahe_kernel_size, 
+        clip_limit=clahe_clip_limit, 
+        nbins=clahe_n_bins
+    ))
+    
+    return preprocessed
+
+def segment_2D(channel_slice):
+    """Segment nuclei in 2D slices using Cellpose"""
+    model = models.Cellpose(gpu=False, model_type='nuclei')
+    
+    total_z = channel_slice.shape[0]
+    segmented_image = np.zeros_like(channel_slice, dtype=np.uint16)
+    total_cells_segmented = 0
+    
+    for z in range(total_z):
+        if (z + 1) * 10 // total_z > z * 10 // total_z:  # Check if percentage milestone is crossed
+            print(f"{datetime.now():%H:%M:%S} - Segmentation {((z + 1) * 100) // total_z}% complete")
+
+        z_slice = channel_slice[z]
+        segmented_image_z_slice, flows, styles, diams = model.eval(
+            z_slice,
+            diameter=cell_diameter,
+            flow_threshold=flow_threshold,  # Higher is more cells
+            cellprob_threshold=cellprob_threshold,  # Lower is more cells
+        )
+    
+        segmented_image[z] = segmented_image_z_slice
+        total_cells_segmented += len(np.unique(segmented_image_z_slice)) - 1  # Subtract 1 for background (0)
+    
+    print(f"Total cells segmented: {total_cells_segmented}")
+    print(f"Cell diameter = {cell_diameter}, Flow threshold = {flow_threshold}, "
+            f"Cellprob threshold = {cellprob_threshold}, Nuclear Channel = {nuclear_channel_idx}")
+    
+    return segmented_image
+
+
+def calculate_iou(cell_1, cell_2):
+    """Calculate Intersection over Union (IoU) between two binary masks"""
+    intersection = np.logical_and(cell_1, cell_2).sum()
+    union = np.logical_or(cell_1, cell_2).sum()
+    if union == 0:
+        return 0
+    return intersection / union
+
+def stitch_by_iou(segmented_image):
+    """Stitch segmented cells across z-slices based on IoU"""
+    total_z = segmented_image.shape[0]
+    
+    def relabel_stitched_masks(segmented_image):
+        """Relabels the stitched 2D segmentation masks based on IoU across z-slices"""
+        stitched_image = np.squeeze(segmented_image).astype(np.uint16)
+            
+        current_label = 1
+        for z in range(1, total_z):
+            if (z + 1) * 10 // total_z > z * 10 // total_z:  # Check if percentage milestone is crossed
+                print(f"{datetime.now():%H:%M:%S} - Stitching {((z + 1) * 100) // total_z}% complete)")
+
+            previous_slice = stitched_image[z-1]
+            current_slice = stitched_image[z]
+            
+            # Create a copy of the current slice to store new labels
+            new_labels = np.zeros_like(current_slice)
+            
+            # Find the unique labels in the current slice
+            unique_labels = np.unique(current_slice)
+            
+            for label in unique_labels:
+                if label == 0:
+                    continue  # Skip background
+
+                # Extract the current cell in the current slice
+                current_cell = current_slice == label
+                
+                # Check for overlap with any cell in the previous slice
+                max_iou = 0
+                best_match_label = 0
+                overlap_labels = np.unique(previous_slice[current_cell])
+                overlap_labels = overlap_labels[overlap_labels > 0]  # Exclude background
+                
+                for previous_label in overlap_labels:
+                    previous_cell = previous_slice == previous_label
+                    iou = calculate_iou(current_cell, previous_cell)
+                    if iou > max_iou:
+                        max_iou = iou
+                        best_match_label = previous_label
+                
+                if max_iou >= iou_threshold:
+                    # If the IoU is above the threshold, assign the previous label
+                    new_labels[current_cell] = best_match_label
+                else:
+                    # Otherwise, assign a new label
+                    new_labels[current_cell] = current_label
+                    current_label += 1
+            
+            # Update the current slice with the new labels
+            stitched_image[z] = new_labels
+
+        return stitched_image
+
+    relabelled_stitched_masks = relabel_stitched_masks(segmented_image)
+    return relabelled_stitched_masks
+
+def clean_labels(stitched_image):
+    """Relabels segmented image so that every cell has a unique label and none are skipped"""
+    # Get the unique values in the segmented image, excluding 0 (background)
+    unique_labels = np.unique(stitched_image)
+    unique_labels = unique_labels[unique_labels != 0]  # Exclude background
+    
+    # Create a mapping from old labels to new labels (keep 0 as background)
+    label_mapping = {0: 0}  # Keep background as 0
+    for new_label, old_label in enumerate(unique_labels, start=1):
+        label_mapping[old_label] = new_label
+    
+    # Relabel the segmented image using the mapping
+    relabeled_image = np.zeros_like(stitched_image)
+    for old_label, new_label in label_mapping.items():
+        relabeled_image[stitched_image == old_label] = new_label
+    
+    return relabeled_image
+
+def run_full_analysis():
+    """Main function to run the selected analysis processes"""
+    # Check if project folder has TIFF files
+    tiff_files = [f for f in os.listdir(project_root) if f.lower().endswith('.tiff') or f.lower().endswith('.tif')]
+    
+    if not tiff_files:
+        messagebox.showerror("Error", "No TIFF files found in the project folder.")
+        return
+    
+    # Get selected processes
+    selected_processes = [p for p, v in processes.items() if v.get()]
+    if not selected_processes:
+        messagebox.showerror("Error", "Please select at least one process.")
+        return
+    
+    print(f"Starting analysis with processes: {', '.join(selected_processes)}")
+    
+    for tiff_file in tiff_files:
+        tiff_path = os.path.join(project_root, tiff_file)
+        output_folder = os.path.join(project_root, os.path.splitext(tiff_file)[0])
+        
+        # Create output folder if it doesn't exist
+        os.makedirs(output_folder, exist_ok=True)
+        
+        # Load the TIFF file
+        try:
+            image_stack = tifffile.imread(tiff_path)
+            print(f"Loaded image with shape: {image_stack.shape}")
+            
+            # Extract nuclear channel
+            if len(image_stack.shape) > 3:  # If multi-channel
+                nuclear_slice = image_stack[:, nuclear_channel_idx, :, :]
+            else:  # Single channel
+                nuclear_slice = image_stack
+            
+            preprocessed_image = None
+            segmented_image = None
+            
+            # Run preprocessing if selected
+            if "Preprocessing" in selected_processes:
+                print(f"{datetime.now():%H:%M:%S} - Starting preprocessing")
+                preprocessed_image = apply_preprocessing(nuclear_slice)
+                
+                # Save preprocessed image
+                preprocessed_path = os.path.join(output_folder, f"{os.path.splitext(tiff_file)[0]}_preprocessed.tiff")
+                tifffile.imwrite(preprocessed_path, preprocessed_image)
+                print(f"Saved preprocessed image to {preprocessed_path}")
+            
+            # Run segmentation if selected
+            if "Segmentation" in selected_processes and segmentation_selected:
+                print(f"{datetime.now():%H:%M:%S} - Starting segmentation")
+                
+                # Use preprocessed image if available, otherwise use raw nuclear channel
+                seg_input = preprocessed_image if preprocessed_image is not None else nuclear_slice
+                
+                # Run 2D segmentation
+                segmented_image = segment_2D(seg_input)
+                
+                # Run 3D stitching and cleaning
+                stitched_image = stitch_by_iou(segmented_image)
+                final_segmentation = clean_labels(stitched_image)
+                
+                # Save segmentation results
+                segmentation_path = os.path.join(output_folder, f"{os.path.splitext(tiff_file)[0]}_segmentation.tiff")
+                tifffile.imwrite(segmentation_path, final_segmentation)
+                print(f"Saved segmentation to {segmentation_path}")
+                
+                # Store for analysis and visualization
+                segmented_image = final_segmentation
+            
+            # Run analysis if selected
+            if "Analysis" in selected_processes:
+                print(f"{datetime.now():%H:%M:%S} - Starting analysis")
+                # Here you would implement the analysis logic
+                # This part would depend on what specific analysis you want to perform
+                
+            # Open in napari for visual confirmation
+            if segmented_image is not None or preprocessed_image is not None:
+                viewer = napari.Viewer()
+                
+                if preprocessed_image is not None:
+                    viewer.add_image(preprocessed_image, name='Preprocessed')
+                
+                if segmented_image is not None:
+                    viewer.add_labels(segmented_image, name='Segmentation')
+                
+                napari.run()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error processing {tiff_file}: {str(e)}")
+            print(f"Error processing {tiff_file}: {str(e)}")
+
+# Create the GUI for analysis options
+analysis_window = tk.Toplevel(root)
+analysis_window.title("Run Analysis")
+analysis_window.geometry("400x300")
+
+frame = tk.Frame(analysis_window, padx=20, pady=20)
+frame.pack(fill=tk.BOTH, expand=True)
+
+tk.Label(frame, text="Run Analysis", font=("Arial", 12, "bold")).pack(pady=10)
+
+# Process selection
+processes_frame = tk.LabelFrame(frame, text="Select Processes")
+processes_frame.pack(fill=tk.X, pady=10)
+
+processes = {
+    "Preprocessing": tk.BooleanVar(value=True),
+    "Segmentation": tk.BooleanVar(value=segmentation_selected),
+    "Analysis": tk.BooleanVar(value=True)
+}
+
+for process, var in processes.items():
+    tk.Checkbutton(processes_frame, text=process, variable=var).pack(anchor="w", padx=10)
+
+# Parameter display
+params_frame = tk.LabelFrame(frame, text="Parameters")
+params_frame.pack(fill=tk.X, pady=10)
+
+tk.Label(params_frame, text=f"Nuclear Channel: {nuclear_channel_idx}").pack(anchor="w", padx=10)
+if segmentation_selected:
+    tk.Label(params_frame, text=f"Cell Diameter: {cell_diameter}").pack(anchor="w", padx=10)
+
+# Buttons
+button_frame = tk.Frame(frame)
+button_frame.pack(pady=20)
+
+tk.Button(button_frame, text="Cancel", command=analysis_window.destroy, width=10).pack(side=tk.LEFT, padx=5)
+tk.Button(button_frame, text="Start", command=run_full_analysis, width=10).pack(side=tk.LEFT, padx=5)
+
+run_full_analysis()

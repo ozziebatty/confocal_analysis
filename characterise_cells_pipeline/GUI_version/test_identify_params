@@ -1,0 +1,379 @@
+print("Running")
+import numpy as np
+import tifffile
+import pandas as pd
+import os
+from skimage.exposure import equalize_adapthist
+from skimage import img_as_ubyte
+import napari
+from magicgui import magicgui
+from cv2 import GaussianBlur
+from magicgui.widgets import Container, CheckBox
+from cellpose import models
+from skimage.segmentation import find_boundaries
+
+print("Running improved preprocessing and segmentation tool with interactive process selection...")
+
+# ====== STEP 1: FILE PATHS AND ERROR CHECKING ======
+input_image_path = '/Users/oskar/Desktop/format_test/test.lsm'
+input_parameters_csv = '/Users/oskar/Desktop/format_test/parameters.csv'
+
+# Error checking for files
+for filepath in [input_image_path, input_parameters_csv]:
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"File not found: {filepath}")
+
+# ====== STEP 2: LOAD DATA ======
+try:
+    # Load image
+    image = tifffile.imread(input_image_path)
+    print("Image loaded with shape (z, c, y, x):", image.shape, "dtype:", image.dtype)
+    
+    if len(image.shape) != 4:
+        raise ValueError(f"Expected 4D image (z, c, y, x), got shape {image.shape}")
+    
+    total_z = image.shape[0]
+    total_channels = image.shape[1]
+    
+    # Load parameters file
+    try:
+        parameters_df = pd.read_csv(input_parameters_csv)
+        required_columns = ['Parameter', 'Process', 'Default Value', 'Min', 'Max']
+        if not all(col in parameters_df.columns for col in required_columns):
+            raise ValueError(f"Parameters CSV must contain columns: {required_columns}")
+    except Exception as e:
+        raise ValueError(f"Error loading parameters CSV file: {str(e)}")
+        
+    # Define available processes (instead of loading from file)
+    available_processes = ['CLAHE', 'Gaussian']
+    print("Available processing steps:", available_processes)
+        
+except Exception as e:
+    print(f"Error during initialization: {str(e)}")
+    raise
+
+# ====== STEP 3: DEFINE PROCESSING FUNCTIONS ======
+def apply_CLAHE(image_slice, kernel_size=16, clip_limit=0.005,):
+    """Apply Contrast Limited Adaptive Histogram Equalization"""
+    try:
+        # Ensure parameters are valid
+        kernel_size = max(3, int(kernel_size))
+        clip_limit = max(0.001, float(clip_limit))
+        return img_as_ubyte(equalize_adapthist(image_slice, 
+                                             kernel_size=(kernel_size, kernel_size), 
+                                             clip_limit=clip_limit))
+    except Exception as e:
+        print(f"Error applying CLAHE: {str(e)}")
+        return image_slice
+
+def apply_Gaussian(image_slice, kernel_size=11, sigma=0.4):
+    """Apply Gaussian blur"""
+    try:
+        # Ensure kernel size is valid and odd
+        kernel_size = max(3, int(kernel_size))
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        sigma = max(0.1, float(sigma))
+        return GaussianBlur(image_slice, ksize=(kernel_size, kernel_size), sigmaX=sigma)
+    except Exception as e:
+        print(f"Error applying Gaussian: {str(e)}")
+        return image_slice
+
+def apply_segmentation(image_slice, cell_diameter=8.0, flow_threshold=0.5, cellprob_threshold=0.5):
+    """Apply Cellpose segmentation"""
+    try:
+        print("Applying segmentation with parameters:")
+        print(f"- Cell diameter: {cell_diameter}")
+        print(f"- Flow threshold: {flow_threshold}")
+        print(f"- Cell probability threshold: {cellprob_threshold}")
+        
+        # Create model - use 'nuclei' for nuclear segmentation
+        model = models.Cellpose(gpu=False, model_type='nuclei')
+        
+        # Run segmentation
+        masks, flows, styles, diams = model.eval(
+            image_slice,
+            diameter=cell_diameter,
+            flow_threshold=flow_threshold,
+            cellprob_threshold=cellprob_threshold,
+        )
+        
+        # Create cell outlines (1-pixel thick)
+        cell_outlines = find_boundaries(masks, mode='inner', background=0)
+        
+        print(f"Segmentation complete! Found {np.max(masks)} cells/nuclei")
+        return masks, cell_outlines
+    except Exception as e:
+        print(f"Error during segmentation: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # Return empty mask with same shape as input
+        return np.zeros_like(image_slice), np.zeros_like(image_slice)
+
+# ====== STEP 4: CREATE NAPARI VIEWER ======
+viewer = napari.Viewer()
+
+# Dictionary to store current parameter values
+param_values = {}
+
+# Dictionary to store process selection state
+process_enabled = {process: False for process in available_processes}
+
+# Store current slice information as global variables for easy access
+current_z = 5
+current_channel = 0
+processed_image = None
+
+# Initialize parameter values from the CSV
+for _, row in parameters_df.iterrows():
+    param_name = row['Parameter']
+    default_value = row['Default Value']
+    # Use default if value is NaN
+    param_values[param_name] = default_value
+
+# ====== STEP 5: SLICE SELECTION WIDGET ======
+@magicgui(
+    z_slice={"label": "Z slice", "widget_type": "Slider", "min": 0, "max": total_z-1},
+    channel={"label": "Channel", "widget_type": "Slider", "min": 0, "max": total_channels-1},
+    call_button="Update Position"
+)
+
+def select_slice(z_slice=5, channel=0):
+    """Select a z-slice and channel to view"""
+    global current_z, current_channel
+    
+    try:
+        # Update global variables
+        current_z = z_slice
+        current_channel = channel
+        
+        # Get the original slice
+        original_slice = image[z_slice, channel, :, :]
+        
+        # Update viewer
+        if "unprocessed" in viewer.layers:
+            viewer.layers["unprocessed"].data = original_slice
+        else:
+            viewer.add_image(original_slice, name="unprocessed")
+            
+        return True
+    except Exception as e:
+        print(f"Error selecting slice: {str(e)}")
+        return False
+
+# ====== STEP 6: PREPROCESSING FUNCTION ======
+def apply_preprocessing():
+    """Apply selected preprocessing steps to the current slice"""
+    global processed_image
+    
+    try:
+        # Get the original slice using global variables
+        original_slice = image[current_z, current_channel, :, :]
+        processed = original_slice.copy()
+        
+        # Get selected processes from the global process_enabled dictionary
+        selected_processes = [process for process, enabled in process_enabled.items() if enabled]
+        
+        if not selected_processes:
+            print("No processes selected. Displaying original image.")
+            processed = original_slice
+        else:
+            print(f"Applying selected processes: {selected_processes}")
+            
+            # Apply processing steps
+            for process in selected_processes:
+                if process == 'CLAHE':
+                    kernel_size = int(param_values.get('CLAHE_kernel_size', 16))
+                    clip_limit = float(param_values.get('CLAHE_cliplimit', 0.005))
+                    print(f"Applying CLAHE with kernel_size={kernel_size}, clip_limit={clip_limit}")
+                    processed = apply_CLAHE(processed, kernel_size, clip_limit)
+                    
+                elif process == 'Gaussian':
+                    kernel_size = int(param_values.get('gaussian_kernel_size', 11))
+                    sigma = float(param_values.get('gaussian_sigma', 0.4))
+                    processed = apply_Gaussian(processed, kernel_size, sigma)
+        
+        # Store the processed image for segmentation
+        processed_image = processed
+        
+        # Update viewer
+        if "Preprocessed" in viewer.layers:
+            viewer.layers["Preprocessed"].data = processed
+        else:
+            viewer.add_image(processed, name="Preprocessed")
+            
+        return True
+    except Exception as e:
+        print(f"Error during preprocessing: {str(e)}")
+        return False
+
+# ====== STEP 7: CREATE PARAMETER WIDGETS ======
+# First, create process selection widget
+process_container = Container(layout="vertical")
+
+# Function to handle process checkbox changes
+def on_process_toggle(process_name, value):
+    process_enabled[process_name] = value
+    print(f"Process '{process_name}' {'enabled' if value else 'disabled'}")
+    # Apply preprocessing to update the image
+    apply_preprocessing()
+
+# Add checkboxes for each process
+for process in available_processes:
+    checkbox = CheckBox(name=f"Enable {process}", value=process_enabled[process])
+    # Use lambda with default args to avoid late binding issues
+    checkbox.changed.connect(lambda v, p=process: on_process_toggle(p, v))
+    process_container.append(checkbox)
+
+# Combined parameters widget for all processing techniques
+@magicgui(
+    # CLAHE parameters
+    clahe_kernel_size={"label": "CLAHE Kernel Size", "widget_type": "Slider", 
+                      "min": 3, "max": 100, "step": 1},
+    clahe_clip_limit={"label": "CLAHE Clip Limit", "widget_type": "FloatSlider", 
+                     "min": 0.001, "max": 0.1, "step": 0.001},
+    clahe_n_bins={"label": "CLAHE n bins", "widget_type": "Slider", 
+                      "min": 3, "max": 100, "step": 1},
+    
+    # Gaussian parameters
+    gaussian_kernel_size={"label": "Gaussian Kernel Size", "widget_type": "Slider", 
+                         "min": 3, "max": 31, "step": 2},
+    gaussian_sigma={"label": "Gaussian Sigma", "widget_type": "FloatSlider", 
+                   "min": 0.1, "max": 5.0, "step": 0.1},
+
+    call_button="Update Preprocessing"
+)
+def processing_parameters(
+    clahe_kernel_size=16, 
+    clahe_clip_limit=0.005, 
+    clahe_n_bins=11,
+    gaussian_kernel_size=11, 
+    gaussian_sigma=0.4
+):
+    try:
+        # Update CLAHE parameters
+        param_values['CLAHE_kernel_size'] = clahe_kernel_size
+        param_values['CLAHE_cliplimit'] = clahe_clip_limit
+        param_values['CLAHE_n_bins'] = clahe_n_bins
+        print(f"CLAHE parameters updated: kernel_size={clahe_kernel_size}, clip_limit={clahe_clip_limit}")
+        
+        # Update Gaussian parameters (ensure kernel is odd)
+        if gaussian_kernel_size % 2 == 0:
+            gaussian_kernel_size += 1
+        param_values['gaussian_kernel_size'] = gaussian_kernel_size
+        param_values['gaussian_sigma'] = gaussian_sigma
+        print(f"Gaussian parameters updated: kernel_size={gaussian_kernel_size}, sigma={gaussian_sigma}")
+        
+        # Re-apply preprocessing with updated parameters
+        apply_preprocessing()
+
+        return True
+    except Exception as e:
+        print(f"Error updating parameters: {str(e)}")
+        return False
+
+# ====== STEP 8: SEGMENTATION WIDGET AND FUNCTION ======
+# Get segmentation parameters from DataFrame
+segmentation_params = parameters_df[parameters_df['Process'] == 'segmentation']
+
+@magicgui(
+    cell_diameter={"label": "Cell diameter", "widget_type": "FloatSlider", 
+                 "min": 5.0, "max": 50.0, "step": 0.5},
+    flow_threshold={"label": "Flow threshold", "widget_type": "FloatSlider", 
+                  "min": 0.1, "max": 1.0, "step": 0.01},
+    cellprob_threshold={"label": "Cell probability threshold", "widget_type": "FloatSlider", 
+                      "min": 0.0, "max": 10.0, "step": 0.1},
+    call_button="Run Segmentation"
+)
+def segmentation_widget(cell_diameter=8.0, flow_threshold=0.5, cellprob_threshold=0.5):
+    """Run Cellpose segmentation on the current image"""
+    try:
+        # Store parameters
+        param_values['cell_diameter'] = cell_diameter
+        param_values['flow_threshold'] = flow_threshold
+        param_values['cellprob_threshold'] = cellprob_threshold
+        
+        # If preprocessing was run, use processed image, otherwise use original
+        if processed_image is not None:
+            input_image = processed_image
+            print("Using preprocessed image for segmentation")
+        else:
+            input_image = image[current_z, current_channel, :, :]
+            print("Using original image for segmentation (no preprocessing applied)")
+        
+        # Apply segmentation
+        masks, outlines = apply_segmentation(input_image, cell_diameter, flow_threshold, cellprob_threshold)
+        
+        # Add or update segmentation layers
+        if "Segmentation" in viewer.layers:
+            viewer.layers["Segmentation"].data = masks
+        else:
+            # Add as labels layer with random colors
+            viewer.add_labels(masks, name="Segmentation", visible=False)
+        
+        # Add or update cell outlines layer
+        if "Cell Outlines" in viewer.layers:
+            viewer.layers["Cell Outlines"].data = outlines
+        else:
+            # Add binary outlines as labels layer
+            viewer.add_labels(outlines.astype(np.uint8), name="Cell Outlines")
+        
+        print("Segmentation complete and displayed")
+        return True
+    except Exception as e:
+        print(f"Error during segmentation: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+# ====== STEP 9: SAVE PARAMETERS FUNCTION ======
+@magicgui(call_button="Save Parameters")
+def save_parameters():
+    try:
+        # Update parameters DataFrame with current values
+        for param_name, value in param_values.items():
+            mask = parameters_df['Parameter'] == param_name
+            if any(mask):
+                parameters_df.loc[mask, 'Value'] = value
+        
+        # Also save process selection state
+        process_state_df = pd.DataFrame({
+            'Process': list(process_enabled.keys()),
+            'Enabled': [str(v).upper() for v in process_enabled.values()]
+        })
+        
+        # Save to CSV
+        output_params_path = os.path.join(os.path.dirname(input_parameters_csv), 'parameters_updated.csv')
+        parameters_df.to_csv(output_params_path, index=False)
+        
+        output_processes_path = os.path.join(os.path.dirname(input_parameters_csv), 'processes_updated.csv')
+        process_state_df.to_csv(output_processes_path, index=False)
+        
+        print(f"Parameters saved successfully to {output_params_path}")
+        print(f"Process selections saved to {output_processes_path}")
+        return True
+    except Exception as e:
+        print(f"Error saving parameters: {str(e)}")
+        return False
+
+# ====== STEP 10: ADD WIDGETS TO VIEWER ======
+# Add the process selection widget
+viewer.window.add_dock_widget(process_container, name="Select Processes")
+
+# Add the slice selection widget
+viewer.window.add_dock_widget(select_slice, name="Update Position")
+
+# Add the parameters widget
+viewer.window.add_dock_widget(processing_parameters, name="Update Processing")
+
+# Add segmentation widget
+viewer.window.add_dock_widget(segmentation_widget, name="Update Segmentation")
+
+# Add save button
+viewer.window.add_dock_widget(save_parameters, name="Save Parameters")
+
+# Initialize the view with the first slice
+select_slice()
+
+# Start the application
+napari.run()

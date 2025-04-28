@@ -1,0 +1,15 @@
+print("Running")
+
+import napari
+import tifffile
+
+file_path = '/Users/oskar/Desktop/format_test/SBSO_stellaris/SBSO_stellaris_segmentation.tiff'
+
+segmented = tifffile.imread(file_path)
+
+viewer = napari.Viewer()
+
+viewer.add_image(segmented)
+
+napari.run()
+
