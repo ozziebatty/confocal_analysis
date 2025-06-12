@@ -1,3 +1,5 @@
+#%%
+print("Importing libraries...")
 import numpy as np
 import tifffile
 import napari
@@ -6,25 +8,37 @@ import pandas as pd
 import sys
 import os
 
-debug_mode = False
+debug_mode = True
 
 if debug_mode == True:
-    folder_pathway = '/Users/oskar/Desktop/steventon_lab/image_analysis/images/20x_example_image_very_cropped'
+    #folder_pathway = '/Users/oskar/Desktop/format_test/SBSO_stellaris_cropped_data'
     dapi_channel = 0
-    print(dapi_channel)
-    print(type(dapi_channel))
     display_napari = 'False'
 else:
     folder_pathway = sys.argv[1]
     dapi_channel = int(sys.argv[2])
     display_napari = sys.argv[3]
 
-
-image_pathway = folder_pathway + '/preprocessed.tiff'
+#%%
+cropped = False
+if cropped == True:
+    image_pathway ='/Users/oskar/Desktop/format_test/SBSO_stellaris_cropped.tiff'
+    folder_pathway = '/Users/oskar/Desktop/format_test/SBSO_stellaris_cropped_data'
+    segmented_image_pathway = '/Users/oskar/Desktop/format_test/SBSO_stellaris_cropped_segmented_stitched.tiff'
+else:
+    image_pathway ='/Users/oskar/Desktop/format_test/SBSO_stellaris.tiff'
+    folder_pathway = '/Users/oskar/Desktop/format_test/SBSO_stellaris_data'
+    segmented_image_pathway = '/Users/oskar/Desktop/format_test/SBSO_stellaris_segmented_stitched.tiff'
+    
+#image_pathway ='/Users/oskar/Desktop/format_test/SBSO_stellaris_cropped.tiff'
+#image_pathway = folder_pathway + '/preprocessed.tiff'
 image = tifffile.imread(image_pathway)
 
-segmented_image_pathway = folder_pathway + '/stitched.tiff'
+#segmented_image_pathway = '/Users/oskar/Desktop/format_test/SBSO_stellaris_cropped_segmented_stitched.tiff'
+#segmented_image_pathway = folder_pathway + '/stitched.tiff'
 segmented_image = tifffile.imread(segmented_image_pathway)
+
+#%%
 
 #Image properties prior to resizing
 total_z = image.shape[0]
@@ -102,9 +116,28 @@ def quantify_cell_fluorescence(image, segmented_image):
     
     return normalised_cell_fluorescence, z_slice_fluorescence
 
+def find_average_z_slice_of_each_label(segmented_image):
+    z_slice_averages = np.zeros(total_cells, dtype=[('running_z_total', int), ('z_stack_count', int), ('average_z', float)])
+
+    for z in range(total_z):
+        z_slice_segmented_image = segmented_image[z]
+        
+        for label in np.unique(z_slice_segmented_image):
+            if label == 0:  # Skip background
+                continue
+            z_slice_averages[label]['running_z_total'] += z
+            z_slice_averages[label]['z_stack_count'] += 1
+
+    #z_slice_averages = z_slice_averages[1:]
+
+    for label in range(len(z_slice_averages)):
+        z_slice_averages[label]['average_z'] = z_slice_averages[label]['running_z_total'] / z_slice_averages[label]['z_stack_count']
+          
+    return z_slice_averages
+
 def save_to_csv():
     print("Saving data...")
-    
+    ''' 
     characterised_cells_pathway = folder_pathway + '/characterised_cells.csv'
     characterised_cells_df = pd.DataFrame.from_dict(characterised_cells, orient='index')
     characterised_cells_df.reset_index(inplace=True)
@@ -126,18 +159,30 @@ def save_to_csv():
         'channel_3': [item[0][3] for item in z_slice_fluorescence],
         'pixel_count': [item[1] for item in z_slice_fluorescence]
     })
-
+    '''
+    average_z_df = pd.DataFrame({
+        'cell': np.arange(0, len(z_slice_averages)),
+        'average_z': [z_slice_averages[label]['average_z'] for label in range(len(z_slice_averages))]
+    })
     
-    characterised_cells_df.to_csv(characterised_cells_pathway, index=False)
-    normalised_cell_fluorescence_df.to_csv(normalised_cell_fluorescence_pathway, index=False)
-    z_slice_fluorescence_df.to_csv(z_slice_fluorescence_pathway, index=False)
+    
+    #characterised_cells_df.to_csv(characterised_cells_pathway, index=False)
+    #normalised_cell_fluorescence_df.to_csv(normalised_cell_fluorescence_pathway, index=False)
+    #z_slice_fluorescence_df.to_csv(z_slice_fluorescence_pathway, index=False)
+    average_z_df.to_csv(average_z_pathway, index=False)
 
-normalised_cell_fluorescence, z_slice_fluorescence = quantify_cell_fluorescence(image, segmented_image)
+
+#normalised_cell_fluorescence, z_slice_fluorescence = quantify_cell_fluorescence(image, segmented_image)
+z_slice_averages = find_average_z_slice_of_each_label(segmented_image)
+
 
 characterised_cells_pathway = folder_pathway + '/characterised_cells.csv'
 normalised_cell_fluorescence_pathway = folder_pathway + '/normalised_cell_fluorescence.csv'
 z_slice_fluorescence_pathway = folder_pathway + '/z_slice_fluorescence.csv'
+average_z_pathway = folder_pathway + '/average_z.csv'
 
 save_to_csv()
 
 
+
+# %%

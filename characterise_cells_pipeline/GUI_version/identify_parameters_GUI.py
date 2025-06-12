@@ -14,8 +14,6 @@ from cv2 import GaussianBlur
 
 input_path = '/Users/oskar/Desktop/format_test/SBSO_stellaris.tiff'
 
-print("Image loaded with shape (z, c, y, x):", image.shape, "dtype:", image.dtype)
-
 
 # Load image
 image = tifffile.imread(input_path)

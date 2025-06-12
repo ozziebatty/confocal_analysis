@@ -1,15 +1,3 @@
-# %%
-
-print("A")
-
-print("B")
-# %% this marks a cell
-print("C")
-
-
-#%%
-print("Running")
-
 import os
 import numpy as np
 import pandas as pd
@@ -350,9 +338,6 @@ def preprocess(nuclear_slice, parameters):
     return image
 
 def segment_and_stitch(image, parameters):
-
-    ERROR
-    #what about a new error
 
     print("working")
 

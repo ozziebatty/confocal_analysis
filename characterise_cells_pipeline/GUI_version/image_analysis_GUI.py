@@ -1,14 +1,18 @@
+#%%
+
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import os
 import shutil
 import csv
+import tifffile
 
 # Global variables
 loaded_project = True
 project_path = "/Users/oskar/Desktop/format_test"
 foldername = "/Users/oskar/Desktop/format_test"
 
+#%%
 def create_project_window():
     def create_project():
         input_path = file_entry.get()
@@ -149,7 +153,7 @@ def create_project_window():
     tk.Button(button_frame, text="Cancel", command=project_window.destroy, width=10).pack(side=tk.LEFT, padx=5)
     tk.Button(button_frame, text="Create Project", command=create_project, width=15).pack(side=tk.LEFT, padx=5)
 
-def define_parameters_window():
+def define_parameters_window(image):
 
     loaded_project = True
     project_path = foldername  
@@ -158,9 +162,7 @@ def define_parameters_window():
         messagebox.showerror("Error", "Please load a project first.")
         return
     
-    input_image_path = filedialog.askopenfilename(title="Select Sample Image File")
-
-    print(input_image_path)
+    #input_image_path = filedialog.askopenfilename(title="Select Sample Image File")
 
     import numpy as np
     import tifffile
@@ -175,9 +177,11 @@ def define_parameters_window():
     from cellpose import models
     from skimage.segmentation import find_boundaries
 
+
     # Store current slice information as global variables for easy access
-   #current_z = 14
+    current_z = 0
     #current_channel = 0
+    
     #processed_image = None
     segmentation_selected = True
 
@@ -190,8 +194,13 @@ def define_parameters_window():
     try:
         # Load image
         print(input_image_path)
-        image = tifffile.imread(input_image_path)
+        #image = tifffile.imread(input_image_path)
         print("Successfully loaded")
+        
+        # What datatype?
+        print(image.min())
+        print(image.max())
+        
         print("Image loaded with shape (z, c, y, x):", image.shape, "dtype:", image.dtype)
         
         if len(image.shape) != 4:
@@ -204,7 +213,7 @@ def define_parameters_window():
         # Load parameters file
         try:
             parameters_df = pd.read_csv(input_parameters_csv)
-            required_columns = ['Parameter', 'Process', 'Default Value', 'Min', 'Max']
+            required_columns = ['Parameter', 'Process', 'Channel', 'Default Value', 'Min', 'Max', 'Data type', 'Must be odd']
             if not all(col in parameters_df.columns for col in required_columns):
                 raise ValueError(f"Parameters CSV must contain columns: {required_columns}")
         except Exception as e:
@@ -218,6 +227,63 @@ def define_parameters_window():
         print(image.shape)
         raise
 
+   # Dictionary to store current parameter values
+    channel_parameters = {}
+    global_parameters = {}
+
+    # Dictionary to store process selection state
+    process_enabled = {process: False for process in available_processes}
+
+    # Initialize parameter values from the CSV
+    for _, row in parameters_df.iterrows():
+        parameter_name = row['Parameter']
+        channel = row['Channel']
+        default_value = row['Default Value']
+        parameter_value = default_value
+        # Use default if value is NaN
+        
+        if pd.notnull(channel):
+            try:
+                channel = int(channel)
+                if channel not in channel_parameters:
+                    channel_parameters[channel] = {}
+                channel_parameters[channel][parameter_name] = parameter_value
+            except ValueError:
+                # Not a number, treat as global
+                global_parameters[parameter_name] = parameter_value
+        else:
+            global_parameters[parameter_name] = parameter_value
+    
+    # Extract min and max values for each parameter from CSV
+    # Map string type names from CSV to actual Python types
+    dtype_map = {
+        'Integer': int,
+        'Float': float,
+    }
+
+    param_min_max = {}
+
+    for _, row in parameters_df.iterrows():
+        param_name = row['Parameter']
+        dtype_str = row['Data type']
+        
+        
+        cast = dtype_map.get(dtype_str)
+        if cast is None:
+            raise ValueError(f"Unsupported Data Type '{dtype_str}' for parameter '{param_name}'")
+
+        # Safely cast min/max using the type
+        try:
+            min_val = cast(row['Min'])
+            max_val = cast(row['Max'])
+        except Exception as e:
+            raise ValueError(f"Error casting min/max for parameter '{param_name}': {e}")
+
+        param_min_max[param_name] = {'min': min_val, 'max': max_val}
+        
+    print("Parameter min/max values:", param_min_max)
+    print("Channel parameters:", channel_parameters)   
+        
     # ====== STEP 3: DEFINE PROCESSING FUNCTIONS ======
     def apply_CLAHE(image_slice, kernel_size=16, clip_limit=0.005, n_bins=11):
         """Apply Contrast Limited Adaptive Histogram Equalization"""
@@ -280,28 +346,6 @@ def define_parameters_window():
     # ====== STEP 4: CREATE NAPARI VIEWER ======
     viewer = napari.Viewer()
 
-    # Dictionary to store current parameter values
-    param_values = {}
-
-    # Dictionary to store process selection state
-    process_enabled = {process: False for process in available_processes}
-
-    # Initialize parameter values from the CSV
-    for _, row in parameters_df.iterrows():
-        param_name = row['Parameter']
-        default_value = row['Default Value']
-        # Use default if value is NaN
-        param_values[param_name] = default_value
-
-    # Extract min and max values for each parameter from CSV
-    param_min_max = {}
-    for _, row in parameters_df.iterrows():
-        param_name = row['Parameter']
-        param_min_max[param_name] = {
-            'min': row['Min'],
-            'max': row['Max']
-        }
-
     # ====== STEP 6: PREPROCESSING FUNCTION ======
     def apply_preprocessing(current_z, current_channel):
         """Apply selected preprocessing steps to the current slice"""
@@ -315,18 +359,20 @@ def define_parameters_window():
             # Get selected processes from the global process_enabled dictionary
             selected_processes = [process for process, enabled in process_enabled.items() if enabled]
                         
+            # Safely get channel-specific parameters, fallback to empty dict
+            channel_params = channel_parameters.get(current_channel, {})
+
             # Apply processing steps
             for process in selected_processes:
                 if process == 'CLAHE':
-                    kernel_size = int(param_values.get('CLAHE_kernel_size', 16))
-                    clip_limit = float(param_values.get('CLAHE_cliplimit', 0.005))
-                    n_bins = int(param_values.get('CLAHE_n_bins', 11))
-                    #print(f"Applying CLAHE with kernel_size={kernel_size}, clip_limit={clip_limit}, n_bins={n_bins}")
+                    kernel_size = int(channel_params.get('CLAHE_kernel_size', 16))
+                    clip_limit = float(channel_params.get('CLAHE_clip_limit', 0.005))
+                    n_bins = int(channel_params.get('CLAHE_n_bins', 11))
                     processed = apply_CLAHE(processed, kernel_size, clip_limit, n_bins)
                     
                 elif process == 'Gaussian':
-                    kernel_size = int(param_values.get('gaussian_kernel_size', 11))
-                    sigma = float(param_values.get('gaussian_sigma', 0.4))
+                    kernel_size = int(channel_params.get('gaussian_kernel_size', 11))
+                    sigma = float(channel_params.get('gaussian_sigma', 0.4))
                     processed = apply_Gaussian(processed, kernel_size, sigma)
         
             # Store the processed image for segmentation
@@ -342,13 +388,13 @@ def define_parameters_window():
         except Exception as e:
             print(f"Error during preprocessing: {str(e)}")
             return False
-
+    
     # ====== STEP 5: SLICE SELECTION WIDGET ======
     @magicgui(
         z_slice={"label": "Z slice", "widget_type": "Slider", "min": 0, "max": total_z-1},
         channel={"label": "Channel", "widget_type": "Slider", "min": 0, "max": total_channels-1}, auto_call=True
     )
-    def update_slice(z_slice=14, channel=0):
+    def update_slice(z_slice=1, channel=0):
         """Select a z-slice and channel to view"""
         global current_z, current_channel
         
@@ -356,10 +402,11 @@ def define_parameters_window():
             # Update global variables
             current_z = z_slice
             current_channel = channel
+            #print("Current channel when updating:", current_channel)
             
             # Get the original slice
             original_slice = image[z_slice, channel, :, :]
-            
+        
             # Update viewer
             if "unprocessed" in viewer.layers:
                 viewer.layers["unprocessed"].data = original_slice
@@ -368,6 +415,8 @@ def define_parameters_window():
                 
             # Automatically apply preprocessing after changing slice
             preprocessed_image = apply_preprocessing(current_z, current_channel)
+            
+            update_sliders(current_channel)
 
             return preprocessed_image
         except Exception as e:
@@ -382,7 +431,7 @@ def define_parameters_window():
     def on_process_toggle(process_name, value):
         process_enabled[process_name] = value
         # Apply preprocessing to update the image
-        update_slice()
+        update_slice(z_slice=current_z, channel=current_channel)
 
     # Add checkboxes for each process
     for process in available_processes:
@@ -391,97 +440,100 @@ def define_parameters_window():
         checkbox.changed.connect(lambda v, p=process: on_process_toggle(p, v))
         process_container.append(checkbox)
 
-    # Get min/max values for each parameter from the parameters_df
-    clahe_kernel_min = int(param_min_max.get('CLAHE_kernel_size', {}).get('min', 3))
-    clahe_kernel_max = int(param_min_max.get('CLAHE_kernel_size', {}).get('max', 100))
-    
-    clahe_clip_min = float(param_min_max.get('CLAHE_cliplimit', {}).get('min', 0.0001))
-    clahe_clip_max = float(param_min_max.get('CLAHE_cliplimit', {}).get('max', 0.5))
-    
-    clahe_bins_min = int(param_min_max.get('CLAHE_n_bins', {}).get('min', 3))
-    clahe_bins_max = int(param_min_max.get('CLAHE_n_bins', {}).get('max', 1000))
-    
-    gaussian_kernel_min = int(param_min_max.get('gaussian_kernel_size', {}).get('min', 3))
-    gaussian_kernel_max = int(param_min_max.get('gaussian_kernel_size', {}).get('max', 31))
-    
-    gaussian_sigma_min = float(param_min_max.get('gaussian_sigma', {}).get('min', 0.05))
-    gaussian_sigma_max = float(param_min_max.get('gaussian_sigma', {}).get('max', 5))
-
     # Combined parameters widget for all processing techniques
-    @magicgui(
-        # CLAHE parameters
-        clahe_kernel_size={"label": "CLAHE Kernel Size", "widget_type": "Slider", 
-                        "min": clahe_kernel_min, "max": min_xy_size, "step": 1},
-        clahe_clip_limit={"label": "CLAHE Clip Limit", "widget_type": "FloatSlider", 
-                        "min": 0.1, "max": 1.0, "step": 0.01},
-        clahe_n_bins={"label": "CLAHE n bins", "widget_type": "Slider", 
-                        "min": clahe_bins_min, "max": clahe_bins_max, "step": 1},
-
-        # Gaussian parameters
-        gaussian_kernel_size={"label": "Gaussian Kernel Size", "widget_type": "Slider", 
-                            "min": gaussian_kernel_min, "max": min_xy_size, "step": 2},
-        gaussian_sigma={"label": "Gaussian Sigma", "widget_type": "FloatSlider", 
-                    "min": 0.1, "max": 1.0, "step": 0.001}, auto_call=True
-    )
-    def processing_parameters(
-        clahe_kernel_size=16, 
-        clahe_clip_limit=0.5,
-        clahe_n_bins=11,
-        gaussian_kernel_size=11, 
-        gaussian_sigma=0.4
+    def processing_parameters_function(
+        clahe_kernel_size=None,
+        clahe_clip_limit=None,
+        clahe_n_bins=None,
+        gaussian_kernel_size=None,
+        gaussian_sigma=None,
     ):
         try:
-            # Map slider values logarithmically for specific parameters
-            # For CLAHE clip limit (logarithmic mapping)
-            clahe_clip_limit_mapped = clahe_clip_min + (clahe_clip_max - clahe_clip_min) * (np.log10(10 * clahe_clip_limit))
-            
-            # For Gaussian sigma (logarithmic mapping)
-            gaussian_sigma_mapped = gaussian_sigma_min + (gaussian_sigma_max - gaussian_sigma_min) * (np.log10(10 * gaussian_sigma))
+            # Use latest parameters if values are not passed in
+            if current_channel not in channel_parameters:
+                channel_parameters[current_channel] = {}
 
-            print("gaussian sigma")
-            print("gaussian sigma mapped", gaussian_sigma_mapped)
-            print("clahe clip limit")
-            print("clahe clip limit mapped", clahe_clip_limit_mapped)
+            if clahe_kernel_size is None:
+                clahe_kernel_size = channel_parameters[current_channel]['CLAHE_kernel_size']
+            if clahe_clip_limit is None:
+                clahe_clip_limit = channel_parameters[current_channel]['CLAHE_clip_limit']
+            if clahe_n_bins is None:
+                clahe_n_bins = channel_parameters[current_channel]['CLAHE_n_bins']
+            if gaussian_kernel_size is None:
+                gaussian_kernel_size = channel_parameters[current_channel]['gaussian_kernel_size']
+            if gaussian_sigma is None:
+                gaussian_sigma = channel_parameters[current_channel]['gaussian_sigma']
 
-            # Update parameters with mapped values
-            param_values['CLAHE_kernel_size'] = clahe_kernel_size
-            param_values['CLAHE_cliplimit'] = clahe_clip_limit_mapped
-            param_values['CLAHE_n_bins'] = clahe_n_bins
-            
-            # Update Gaussian parameters (ensure kernel is odd)
-            if gaussian_kernel_size % 2 == 0:
-                gaussian_kernel_size += 1
-            param_values['gaussian_kernel_size'] = gaussian_kernel_size
-            param_values['gaussian_sigma'] = gaussian_sigma_mapped
-            
-            # Re-apply preprocessing with updated parameters
-            update_slice()
+            # Map slider values logarithmically if needed (currently disabled)
+            # clahe_clip_min = param_min_max['CLAHE_clip_limit']['min']
+            # clahe_clip_max = param_min_max['CLAHE_clip_limit']['max']
+            # gaussian_sigma_min = param_min_max['gaussian_sigma']['min']
+            # gaussian_sigma_max = param_min_max['gaussian_sigma']['max']
+
+            # Store updated CLAHE parameters
+            channel_parameters[current_channel]['CLAHE_kernel_size'] = clahe_kernel_size
+            channel_parameters[current_channel]['CLAHE_clip_limit'] = clahe_clip_limit
+            channel_parameters[current_channel]['CLAHE_n_bins'] = clahe_n_bins
+            channel_parameters[current_channel]['gaussian_kernel_size'] = gaussian_kernel_size
+            channel_parameters[current_channel]['gaussian_sigma'] = gaussian_sigma
+
+            # Apply preprocessing using updated parameters
+            update_slice(z_slice=current_z, channel=current_channel)
 
             return True
+
         except Exception as e:
             print(f"Error updating parameters: {str(e)}")
             return False
+
+
+    processing_parameters = magicgui(
+            # CLAHE parameters
+            clahe_kernel_size={"label": "CLAHE Kernel Size", "widget_type": "Slider", 
+                            "min": param_min_max['CLAHE_kernel_size']['min'], "max": min_xy_size, "step": 1},
+            clahe_clip_limit={"label": "CLAHE Clip Limit", "widget_type": "FloatSlider", 
+                            "min": param_min_max['CLAHE_clip_limit']['min'], "max": param_min_max['CLAHE_clip_limit']['max'], "step": 0.01},
+            clahe_n_bins={"label": "CLAHE n bins", "widget_type": "Slider", 
+                            "min": param_min_max['CLAHE_n_bins']['min'], "max": param_min_max['CLAHE_n_bins']['max'], "step": 1},
+
+            # Gaussian parameters
+            gaussian_kernel_size={"label": "Gaussian Kernel Size", "widget_type": "Slider", 
+                                "min": param_min_max['gaussian_kernel_size']['min'], "max": min_xy_size, "step": 2},
+            gaussian_sigma={"label": "Gaussian Sigma", "widget_type": "FloatSlider", 
+                        "min": param_min_max['gaussian_sigma']['min'], "max": param_min_max['gaussian_sigma']['max'], "step": 0.001},
+            auto_call=True
+        )(processing_parameters_function)
+
+    def update_sliders(current_channel):
+        
+        processing_parameters['clahe_kernel_size'].value = channel_parameters[current_channel]['CLAHE_kernel_size']
+        processing_parameters['clahe_clip_limit'].value = channel_parameters[current_channel]['CLAHE_clip_limit']
+        processing_parameters['clahe_n_bins'].value = channel_parameters[current_channel]['CLAHE_n_bins']
+        processing_parameters['gaussian_kernel_size'].value = channel_parameters[current_channel]['gaussian_kernel_size']
+        processing_parameters['gaussian_sigma'].value = channel_parameters[current_channel]['gaussian_sigma']
+
 
     # ====== STEP 8: SEGMENTATION WIDGET AND FUNCTION ======
     # Segmentation widget without run button
     if segmentation_selected == True:
         # Get min/max values for segmentation parameters
-        cell_diam_min = float(param_min_max.get('cell_diameter', {}).get('min', 5.0))
-        cell_diam_max = float(param_min_max.get('cell_diameter', {}).get('max', 50.0))
         
-        flow_thresh_min = float(param_min_max.get('flow_threshold', {}).get('min', 0.1))
-        flow_thresh_max = float(param_min_max.get('flow_threshold', {}).get('max', 1.0))
+        cell_diameter_min = param_min_max['cell_diameter']['min']
+        cell_diameter_max = param_min_max['cell_diameter']['max']
         
-        cell_prob_min = float(param_min_max.get('cellprob_threshold', {}).get('min', 0.0))
-        cell_prob_max = float(param_min_max.get('cellprob_threshold', {}).get('max', 10.0))
+        flow_threshold_min = param_min_max['flow_threshold']['min']
+        flow_threshold_max = param_min_max['flow_threshold']['max']
+        
+        cell_probability_threshold_min = param_min_max['cellprob_threshold']['min']
+        cell_probability_threshold_max = param_min_max['cellprob_threshold']['max']
         
         @magicgui(
             cell_diameter={"label": "Cell diameter", "widget_type": "FloatSlider", 
-                        "min": cell_diam_min, "max": cell_diam_max, "step": 0.5},
+                        "min": cell_diameter_min, "max": cell_diameter_max, "step": 0.5},
             flow_threshold={"label": "Flow threshold", "widget_type": "FloatSlider", 
-                        "min": flow_thresh_min, "max": flow_thresh_max, "step": 0.01},
+                        "min": flow_threshold_min, "max": flow_threshold_max, "step": 0.01},
             cellprob_threshold={"label": "Cell probability threshold", "widget_type": "FloatSlider", 
-                            "min": cell_prob_min, "max": cell_prob_max, "step": 0.1}
+                            "min": cell_probability_threshold_min, "max": cell_probability_threshold_max, "step": 0.1}
         )
         def segmentation_widget(cell_diameter=8.0, flow_threshold=0.5, cellprob_threshold=0.5):
             """Set parameters for Cellpose segmentation"""
@@ -510,7 +562,7 @@ def define_parameters_window():
                 
                 # Get the current processed image
                 if processed_image is None:
-                    image_to_segment = update_slice()
+                    image_to_segment = update_slice(z_slice=current_z, channel=current_channel)
                 else:
                     image_to_segment = processed_image
 
@@ -596,7 +648,7 @@ def define_parameters_window():
     viewer.window.add_dock_widget(save_parameters, name="Save Parameters")
 
     # Initialize the view with the first slice
-    update_slice()
+    update_slice(z_slice=0, channel=0)
 
     # Start the application
     napari.run()
@@ -652,7 +704,7 @@ def run_analysis_window():
         
         # Extract specific parameters with defaults
         clahe_kernel_size = params.get('CLAHE_kernel_size', 64)
-        clahe_clip_limit = params.get('CLAHE_cliplimit', 0.01)
+        clahe_clip_limit = params.get('CLAHE_clip_limit', 0.01)
         clahe_n_bins = params.get('CLAHE_n_bins', 256)
         gaussian_kernel_size = params.get('gaussian_kernel_size', 3)
         gaussian_sigma = params.get('gaussian_sigma', 1.0)
@@ -1108,5 +1160,13 @@ def main_menu():
 
     root.mainloop()
 
-
+#%%
 main_menu()
+
+#%%
+#input_image_path = "/Users/oskar/Desktop/format_test/SBSO_stellaris_cropped.tiff"
+input_image_path = "/Users/oskar/Desktop/format_test/not needed/SBSO_stellaris.tiff"
+
+image = tifffile.imread(input_image_path)
+define_parameters_window(image)
+# %%

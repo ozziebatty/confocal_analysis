@@ -57,6 +57,7 @@ y_pixels = image.shape[2]
 x_pixels = image.shape[3]
 
 def clean_labels(segmented_image):
+    # This function relabels the segmented image so that no labels are skipped.
     print(f"{datetime.now():%H:%M:%S} - Cleaning labels...")
 
     # Get the unique values in the segmented image, excluding 0 (background, if applicable)

@@ -5,9 +5,7 @@ import tifffile
 import pandas as pd
 
 # Read an image from file
-gastruloid = tifffile.imread('/Users/oskar/Desktop/steventon_lab/image_analysis/images/gastruloid_z.lsm')
-
-image = gastruloid
+image = tifffile.imread('/Users/oskar/Desktop/steventon_lab/image_analysis/images/gastruloid_z.lsm')
 
 normalize = True
 
