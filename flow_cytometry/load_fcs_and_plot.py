@@ -1,29 +1,43 @@
+#%% IMPORT PACKAGES
+
 print("Running")
 from FlowCytometryTools import FCMeasurement
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
-from matplotlib.widgets import PolygonSelector, Button
+from matplotlib.widgets import PolygonSelector, Button, CheckButtons
 import os
 import json
 from datetime import datetime
 from matplotlib.path import Path
 import matplotlib.colors as mcolors
 
+#%% LOAD DATA
+
 # ========== Configure settings ==========
 # Base folder containing all FCS files
-base_folder = '/Users/oskar/Desktop/flow_cytometry/SBSE_d5'
+base_folder = os.path.normpath(r'Y:\Room225_SharedFolder\CytoflexLX_data\oskar\relevant_fcs_files\d4_treatments\A')
 
 # All treatment sample files
 treatment_files = {
-    'WT': os.path.join(base_folder, 'WT.fcs'),
+    'untreated': os.path.join(base_folder, 'untreated.fcs'),
     'BMH21': os.path.join(base_folder, 'BMH21.fcs'),
     'INK128': os.path.join(base_folder, 'INK128.fcs'),
-    'Sal003': os.path.join(base_folder, 'Sal003.fcs')
+    'Sal003': os.path.join(base_folder, 'Sal003.fcs'),
+    'MHY1485': os.path.join(base_folder, 'MHY1485.fcs'),
+    'puromycin': os.path.join(base_folder, 'puromycin.fcs')
+}
+
+# Control files for setting thresholds
+control_files = {
+    '2iLIF': os.path.join(base_folder, '2iLIF.fcs'),
+    'Chiron': os.path.join(base_folder, 'Chiron.fcs'),
+    'N2B27': os.path.join(base_folder, 'N2B27.fcs'),
+    'untreated_ctrl': os.path.join(base_folder, 'untreated.fcs')  # Using same untreated file as control
 }
 
 # Reference treatment (for setting thresholds)
-reference_treatment = 'WT'
+reference_treatment = 'untreated'
 
 # Output folder
 output_folder = base_folder
@@ -40,7 +54,7 @@ if os.path.exists(gates_info_path):
 else:
     gates_info = {}
 
-# Load all FCS files
+# Load all FCS files (treatments and controls)
 print("Loading treatment files...")
 samples = {}
 data_by_treatment = {}
@@ -63,13 +77,43 @@ for treatment, file_path in treatment_files.items():
     else:
         print(f"File not found: {file_path}")
 
+print("\nLoading control files...")
+data_by_control = {}
+
+for control, file_path in control_files.items():
+    print(f"Loading {control} from {file_path}")
+    if os.path.exists(file_path):
+        try:
+            samples[control] = FCMeasurement(ID=control, datafile=file_path)
+            data_by_control[control] = samples[control].data
+        except Exception as e:
+            print(f"Error loading {control}: {e}")
+    else:
+        print(f"File not found: {file_path}")
+
 if not data_by_treatment:
-    raise ValueError("No valid FCS files could be loaded!")
+    raise ValueError("No valid treatment FCS files could be loaded!")
+
+if not data_by_control:
+    raise ValueError("No valid control FCS files could be loaded!")
 
 # Get a reference to the channels from the first loaded sample
 reference_data = data_by_treatment[reference_treatment]
 print("\nChannels:")
 print(reference_data.columns)
+
+# After loading FCS files, add:
+for treatment, data in data_by_treatment.items():
+    print(f"\n{treatment} data shape: {data.shape}")
+    print(f"FSC-A range: {data['FSC-A'].min():.2f} to {data['FSC-A'].max():.2f}")
+    print(f"SSC-A range: {data['SSC-A'].min():.2f} to {data['SSC-A'].max():.2f}")
+
+for control, data in data_by_control.items():
+    print(f"\n{control} (control) data shape: {data.shape}")
+    print(f"FSC-A range: {data['FSC-A'].min():.2f} to {data['FSC-A'].max():.2f}")
+    print(f"SSC-A range: {data['SSC-A'].min():.2f} to {data['SSC-A'].max():.2f}")
+
+#%% CREATE GATES
 
 # ===== Helper function for interactive gate =====
 gate_coords = {}
@@ -95,40 +139,37 @@ def interactive_gate_all_treatments(data_dict, x_channel, y_channel, title, log_
     epsilon = 1.0
     
     # Plot each treatment with different color
-
     for i, (treatment, data) in enumerate(data_dict.items()):
         x = data[x_channel]
         y = data[y_channel]
         
-        if log_scale:
-            x_plot = np.log10(x + epsilon)
-            y_plot = np.log10(y + epsilon)
-        else:
-            x_plot = x
-            y_plot = y
-            
-        # Apply log scale if requested
-        if treatment == 'WT':
+        x_vals = x.values
+        y_vals = y.values
 
-            downsample_idx = np.random.choice(len(x), size=len(x)//10, replace=False)
-            downsized_x = x[downsample_idx]
-            downsized_y = y[downsample_idx]
-            
-            if log_scale:
-                downsized_x_plot = np.log10(downsized_x + epsilon)
-                downsized_y_plot = np.log10(downsized_y + epsilon)
-            else:
-                downsized_x_plot = downsized_x
-                downsized_y_plot = downsized_y
-       
-               # Plot with different color and add to legend
-            ax.scatter(downsized_x_plot, downsized_y_plot, s=1, alpha=0.2, 
-                   color=colors[i % len(colors)], label=treatment)
-            
-        # Store the points for later masking
+        if log_scale:
+            x_plot = np.log10(np.maximum(x_vals, epsilon))
+            y_plot = np.log10(np.maximum(y_vals, epsilon))
+        else:
+            x_plot = x_vals
+            y_plot = y_vals
+
+        # Downsample if too many points
+        if len(x_plot) > 5000:
+            downsample_idx = np.random.choice(len(x_plot), size=5000, replace=False)
+            x_plot_show = x_plot[downsample_idx]
+            y_plot_show = y_plot[downsample_idx]
+        else:
+            x_plot_show = x_plot
+            y_plot_show = y_plot
+
+        # Plot
+        ax.scatter(x_plot_show, y_plot_show, s=1, alpha=0.3, 
+                color=colors[i % len(colors)], label=treatment)
+
+        # Store the original arrays for later masking
         treatment_points[treatment] = {
-            'x': x,
-            'y': y,
+            'x': x_vals,
+            'y': y_vals,
             'x_plot': x_plot,
             'y_plot': y_plot,
         }
@@ -210,224 +251,497 @@ def interactive_gate_all_treatments(data_dict, x_channel, y_channel, title, log_
     
     return results, vertices_store
 
-def compare_fluorescence_ratios(data_dict, reference_treatment, channel, threshold=None, percentile=75):
-    """Compare fluorescence/FSC-A ratios across treatments, using reference treatment's threshold"""
-    results = {}
-    ratio_data = {}
+def interactive_fluorescence_gating_with_controls(singlets_data_dict, controls_data_dict, fluor_channels, fluor_labels):
+    """Interactive polygon gating on fluorescence channels using controls"""
     
-    # Calculate ratios for all treatments
-    for treatment, data in data_dict.items():
-        ratio = data[channel] / data['FSC-A']
-        ratio_data[treatment] = ratio
+    # Colors for controls
+    control_colors = {
+        '2iLIF': '#FF6B6B',      # Red
+        'Chiron': '#4ECDC4',     # Teal
+        'N2B27': '#45B7D1',      # Blue
+        'untreated_ctrl': '#96CEB4'  # Green
+    }
     
-    # If no threshold provided, calculate from reference treatment
-    if threshold is None:
-        threshold = np.percentile(ratio_data[reference_treatment], percentile)
+    # Store gates for each channel
+    channel_gates = {}
     
-    # Create figure with subplots for each treatment
-    n_treatments = len(data_dict)
-    cols = min(2, n_treatments)
-    rows = (n_treatments + cols - 1) // cols  # Ceiling division
-    
-    fig, axs = plt.subplots(rows, cols, figsize=(12, 5*rows))
-    if n_treatments == 1:
-        axs = np.array([axs])  # Make it indexable
-    axs = axs.flatten()
-    
-    # Plot each treatment
-    for i, (treatment, data) in enumerate(data_dict.items()):
-        ax = axs[i]
-        ratio = ratio_data[treatment]
+    # Process each fluorescence channel separately
+    for ch_idx, (channel, label) in enumerate(zip(fluor_channels, fluor_labels)):
+        print(f"\n===== GATING {label} =====")
         
-        # Create mask for values above threshold
-        mask = ratio > threshold
+        # Create single plot for this channel
+        fig, ax = plt.subplots(figsize=(10, 8))
         
-        # Calculate statistics
-        count_above = np.sum(mask)
-        total = len(mask)
-        percentage = 100 * count_above / total if total > 0 else 0
+        # Store plot elements and data for this channel
+        plot_elements = {}
+        control_visibility = {control: True for control in controls_data_dict.keys()}
         
-        # Store results
-        results[treatment] = {
-            'mask': mask,
-            'data': data[mask],
-            'threshold': float(threshold),
-            'count': int(count_above),
-            'total': int(total),
-            'percentage': float(percentage),
-            'ratio_values': ratio.copy()  # Store actual ratio values for potential later use
-        }
+        # Plot each control
+        for control, data in controls_data_dict.items():
+            if len(data) == 0:
+                continue
+                
+            # Create scatter plot - handle potential negative values
+            epsilon = 1.0
+            x_vals = np.log10(np.maximum(data['FSC-A'], epsilon))
+            y_vals = np.log10(np.maximum(data[channel], epsilon))
+            
+            # Downsample if needed
+            if len(x_vals) > 3000:
+                downsample_idx = np.random.choice(len(x_vals), size=3000, replace=False)
+                x_plot = x_vals.iloc[downsample_idx]
+                y_plot = y_vals.iloc[downsample_idx]
+            else:
+                x_plot = x_vals
+                y_plot = y_vals
+            
+            # Create scatter plot
+            scatter = ax.scatter(x_plot, y_plot, s=2, alpha=0.6, 
+                               color=control_colors[control], label=control)
+            
+            # Store plot element
+            plot_elements[control] = scatter
         
-        # Scatter plot colored by whether points are above threshold
-        epsilon = 1.0  # For log scale protection
-        ax.scatter(np.log10(data['FSC-A'] + epsilon), np.log10(data[channel] + epsilon), 
-                  c=mask, s=1, alpha=0.5, cmap='coolwarm')
-        
-        ax.set_xlabel(f'log10(FSC-A)')
+        # Set labels and title
+        ax.set_xlabel('log10(FSC-A)')
         ax.set_ylabel(f'log10({channel})')
-        ax.set_title(f'{treatment}: {percentage:.1f}% above threshold')
-        ax.grid(True)
+        ax.set_title(f'{label}\n(Toggle controls, draw polygon gate, press Done)')
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc='upper left', markerscale=3)
         
-        # Print summary
-        print(f"\n{treatment} {channel} ratio gate:")
-        print(f"Using threshold: {threshold:.6f}")
-        print(f"Points above threshold: {count_above} / {total} ({percentage:.2f}%)")
+        # Create checkbox widget for toggling controls
+        checkbox_ax = fig.add_axes([0.02, 0.7, 0.15, 0.25])
+        control_labels = list(controls_data_dict.keys())
+        checkbox = CheckButtons(checkbox_ax, control_labels, 
+                               [control_visibility[ctrl] for ctrl in control_labels])
+        
+        # Checkbox callback function
+        def toggle_control(label):
+            control_visibility[label] = not control_visibility[label]
+            if label in plot_elements:
+                plot_elements[label].set_visible(control_visibility[label])
+            plt.draw()
+        
+        checkbox.on_clicked(toggle_control)
+        
+        # Create Done button
+        done_ax = fig.add_axes([0.85, 0.02, 0.1, 0.06])
+        done_button = Button(done_ax, 'Done', hovercolor='0.975')
+        
+        # Variables to store gate
+        gate_vertices = []
+        
+        # PolygonSelector for drawing gate
+        def onselect(verts):
+            nonlocal gate_vertices
+            gate_vertices = verts
+            print(f"Gate drawn with {len(verts)} vertices")
+        
+        polygon_selector = PolygonSelector(ax, onselect, useblit=True)
+        
+        # Done button callback
+        gate_finished = False
+        def done_callback(event):
+            nonlocal gate_finished, gate_vertices
+            if len(gate_vertices) < 3:
+                print("Please draw a polygon gate with at least 3 points.")
+                return
+            
+            # Convert log-scale vertices back to linear scale
+            epsilon = 1.0
+            linear_vertices = [(10**vx, 10**vy) for vx, vy in gate_vertices]
+            
+            # Store the gate
+            channel_gates[channel] = {
+                'vertices': linear_vertices,
+                'log_vertices': gate_vertices,
+                'label': label
+            }
+            
+            print(f"Gate saved for {label}")
+            gate_finished = True
+            plt.close(fig)
+        
+        done_button.on_clicked(done_callback)
+        
+        plt.tight_layout()
+        plt.subplots_adjust(left=0.2, bottom=0.15)
+        plt.show()
+        
+        # Wait for gate to be finished before moving to next channel
+        if not gate_finished:
+            print(f"No gate was drawn for {label}. Skipping this channel.")
     
-    # Hide any unused subplots
-    for i in range(n_treatments, len(axs)):
-        axs[i].axis('off')
+    return channel_gates
+
+def apply_gates_to_treatments(singlets_data_dict, channel_gates, fluor_channels, fluor_labels):
+    """Apply the polygon gates to treatment data"""
+    results = {}
     
-    plt.suptitle(f'{channel}/FSC-A Ratio Analysis - Threshold: {threshold:.6f}', fontsize=16)
+    # Create comparison plot
+    n_channels = len(channel_gates)
+    n_treatments = len(singlets_data_dict)
+    
+    if n_channels == 0:
+        print("No gates were created. Cannot apply to treatments.")
+        return results
+    
+    fig, axes = plt.subplots(n_channels, n_treatments, figsize=(4*n_treatments, 4*n_channels))
+    
+    # Handle single channel or single treatment cases
+    if n_channels == 1 and n_treatments == 1:
+        axes = np.array([[axes]])
+    elif n_channels == 1:
+        axes = axes.reshape(1, -1)
+    elif n_treatments == 1:
+        axes = axes.reshape(-1, 1)
+    
+    channel_idx = 0
+    for channel, gate_info in channel_gates.items():
+        if channel not in fluor_channels:
+            continue
+            
+        results[channel] = {}
+        vertices = gate_info['vertices']
+        label = gate_info['label']
+        
+        # Create Path object from vertices (using linear scale vertices)
+        gate_path = Path(vertices)
+        
+        print(f"\n===== Applying {label} gate to treatments =====")
+        
+        for treat_idx, (treatment, data) in enumerate(singlets_data_dict.items()):
+            if n_channels == 1:
+                ax = axes[0, treat_idx] if n_treatments > 1 else axes[0]
+            else:
+                ax = axes[channel_idx, treat_idx] if n_treatments > 1 else axes[channel_idx]
+            
+            # Test which points are inside the gate (using linear scale coordinates)
+            points_to_test = np.column_stack([data['FSC-A'].values, data[channel].values])
+            mask = gate_path.contains_points(points_to_test)
+            
+            # Store results
+            results[channel][treatment] = {
+                'mask': mask,
+                'data': data[mask],
+                'gate_vertices': vertices,
+                'count': int(np.sum(mask)),
+                'total': int(len(mask)),
+                'percentage': float(100 * np.sum(mask) / len(mask)) if len(mask) > 0 else 0
+            }
+            
+            # Plot (convert to log scale for visualization)
+            epsilon = 1.0
+            x_vals = np.log10(np.maximum(data['FSC-A'], epsilon))
+            y_vals = np.log10(np.maximum(data[channel], epsilon))
+            
+            # Color by gate membership
+            colors = ['blue' if m else 'lightgray' for m in mask]
+            ax.scatter(x_vals, y_vals, c=colors, s=1, alpha=0.5)
+            
+            # Add gate boundary (convert vertices to log scale for plotting)
+            log_vertices = [(np.log10(max(vx, epsilon)), np.log10(max(vy, epsilon))) 
+                           for vx, vy in vertices]
+            log_vertices.append(log_vertices[0])  # Close the polygon
+            gate_x, gate_y = zip(*log_vertices)
+            ax.plot(gate_x, gate_y, 'r-', linewidth=2, label='Gate')
+            
+            # Labels and title
+            ax.set_xlabel('log10(FSC-A)')
+            ax.set_ylabel(f'log10({channel})')
+            percentage = results[channel][treatment]['percentage']
+            ax.set_title(f'{treatment}\n{percentage:.1f}% positive')
+            ax.grid(True, alpha=0.3)
+            ax.legend()
+            
+            # Print results
+            print(f"{treatment}: {results[channel][treatment]['count']} / {results[channel][treatment]['total']} ({percentage:.2f}%) positive")
+        
+        channel_idx += 1
+    
     plt.tight_layout()
-    plt.subplots_adjust(top=0.92)
     plt.show()
     
-    return results, threshold
+    return results
+
+def apply_thresholds_to_treatments(singlets_data_dict, thresholds, fluor_channels):
+    """Apply the thresholds set from controls to treatment data"""
+    results = {}
+    
+    # Create comparison plot
+    n_channels = len(fluor_channels)
+    n_treatments = len(singlets_data_dict)
+    
+    fig, axes = plt.subplots(n_channels, n_treatments, figsize=(4*n_treatments, 4*n_channels))
+    if n_channels == 1:
+        axes = axes.reshape(1, -1)
+    if n_treatments == 1:
+        axes = axes.reshape(-1, 1)
+    
+    treatment_colors = list(mcolors.TABLEAU_COLORS)
+    
+    for ch_idx, channel in enumerate(fluor_channels):
+        if channel not in thresholds:
+            print(f"Warning: No threshold set for {channel}")
+            continue
+        
+        threshold = thresholds[channel]
+        results[channel] = {}
+        
+        for treat_idx, (treatment, data) in enumerate(singlets_data_dict.items()):
+            ax = axes[ch_idx, treat_idx]
+            
+            # Calculate ratio
+            ratio = data[channel] / data['FSC-A']
+            mask = ratio > threshold
+            
+            # Store results
+            results[channel][treatment] = {
+                'mask': mask,
+                'data': data[mask],
+                'threshold': float(threshold),
+                'count': int(np.sum(mask)),
+                'total': int(len(mask)),
+                'percentage': float(100 * np.sum(mask) / len(mask)) if len(mask) > 0 else 0
+            }
+            
+            # Plot
+            epsilon = 1.0
+            x_vals = np.log10(np.maximum(data['FSC-A'], epsilon))
+            y_vals = np.log10(np.maximum(data[channel], epsilon))
+            
+            # Color by threshold
+            colors = ['blue' if m else 'lightgray' for m in mask]
+            ax.scatter(x_vals, y_vals, c=colors, s=1, alpha=0.5)
+            
+            # Add threshold line
+            x_range = ax.get_xlim()
+            x_line = np.linspace(x_range[0], x_range[1], 100)
+            y_line = np.log10(threshold) + x_line
+            ax.plot(x_line, y_line, 'r--', linewidth=2)
+            
+            # Labels and title
+            ax.set_xlabel('log10(FSC-A)')
+            ax.set_ylabel(f'log10({channel})')
+            percentage = results[channel][treatment]['percentage']
+            ax.set_title(f'{treatment}\n{percentage:.1f}% above threshold')
+            ax.grid(True, alpha=0.3)
+            
+            # Print results
+            print(f"\n{treatment} - {channel}:")
+            print(f"  Threshold: {threshold:.2e}")
+            print(f"  Above threshold: {results[channel][treatment]['count']} / {results[channel][treatment]['total']} ({percentage:.2f}%)")
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return results
 
 # ===== Gate 1: Cells (SSC-A vs FSC-A) =====
-print("\n===== GATE 1: CELLS (ALL TREATMENTS) =====")
-# Create a dictionary with just the needed columns for each treatment
-cells_gate_data = {t: df[['FSC-A', 'SSC-A']] for t, df in data_by_treatment.items()}
+print("\n===== GATE 1: CELLS (ALL TREATMENTS AND CONTROLS) =====")
 
-# Run interactive gating on all treatments
+# Combine treatment and control data for gating
+all_data_for_gating = {**data_by_treatment, **data_by_control}
+cells_gate_data = {name: df[['FSC-A', 'SSC-A']] for name, df in all_data_for_gating.items()}
+
+# Run interactive gating on all data
 cells_results, cells_vertices = interactive_gate_all_treatments(
     cells_gate_data, 
     'FSC-A', 'SSC-A',
-    'Gate 1: Cells (All Treatments)'
+    'Gate 1: Cells (All Treatments and Controls)'
 )
 
-# Dictionary to store gated cells data for each treatment
+# Dictionary to store gated cells data
 cells_by_treatment = {}
+cells_by_control = {}
 
-# Process and save results for each treatment
+# Process results
 if cells_results:
-    for treatment, result in cells_results.items():
-        # Get the gated data and mask
-        cells_data = result['data']
+    for name, result in cells_results.items():
         cells_mask = result['mask']
         
-        # Store for next step
-        cells_by_treatment[treatment] = data_by_treatment[treatment][cells_mask]
-        
-        # Save cells data
-        cells_output_path = os.path.join(output_folder, f'{treatment}_cells.csv')
-        cells_by_treatment[treatment].to_csv(cells_output_path, index=False)
-        print(f"{treatment} cells data saved to: {cells_output_path}")
-        
-        # Store gate info with proper vertices
-        gates_info[treatment]['gates']['cells'] = {
-            'type': 'polygon',
-            'x_channel': 'FSC-A',
-            'y_channel': 'SSC-A',
-            'vertices': [[float(x), float(y)] for x, y in cells_vertices],  # Convert to list of lists for JSON
-            'count': result['count'],
-            'total': result['total'],
-            'percentage': result['percentage']
-        }
-    
-    # ===== Gate 2: Singlets (FSC-A vs FSC-H) =====
-    print("\n===== GATE 2: SINGLETS (ALL TREATMENTS) =====")
-    
-    # Create dictionary with just the needed columns for singlets gating
-    singlets_gate_data = {t: df[['FSC-A', 'FSC-H']] for t, df in cells_by_treatment.items()}
-    
-    # Run interactive gating on all treatments
-    singlets_results, singlets_vertices = interactive_gate_all_treatments(
-        singlets_gate_data,
-        'FSC-A', 'FSC-H',
-        'Gate 2: Singlets (All Treatments)'
-    )
-    
-    # Dictionary to store gated singlets data for each treatment
-    singlets_by_treatment = {}
-    
-    # Process and save results for each treatment
-    if singlets_results:
-        for treatment, result in singlets_results.items():
-            # Get the gated data and mask
-            singlets_mask = result['mask']
+        if name in data_by_treatment:
+            cells_by_treatment[name] = data_by_treatment[name][cells_mask]
             
-            # Apply mask to the cells data to get singlets
-            singlets_data = cells_by_treatment[treatment][singlets_mask]
-            singlets_by_treatment[treatment] = singlets_data
+            # Save and store gate info for treatments
+            cells_output_path = os.path.join(output_folder, f'{name}_cells.csv')
+            cells_by_treatment[name].to_csv(cells_output_path, index=False)
+            print(f"{name} cells data saved to: {cells_output_path}")
             
-            # Save singlets data
-            singlets_output_path = os.path.join(output_folder, f'{treatment}_singlets.csv')
-            singlets_data.to_csv(singlets_output_path, index=False)
-            print(f"{treatment} singlets data saved to: {singlets_output_path}")
-            
-            # Store gate info
-            gates_info[treatment]['gates']['singlets'] = {
+            gates_info[name]['gates']['cells'] = {
                 'type': 'polygon',
                 'x_channel': 'FSC-A',
-                'y_channel': 'FSC-H',
-                'vertices': [[float(x), float(y)] for x, y in singlets_vertices],  # Convert to list of lists for JSON
+                'y_channel': 'SSC-A',
+                'vertices': [[float(x), float(y)] for x, y in cells_vertices],
                 'count': result['count'],
                 'total': result['total'],
                 'percentage': result['percentage']
             }
+        elif name in data_by_control:
+            cells_by_control[name] = data_by_control[name][cells_mask]
+    
+    # ===== Gate 2: Singlets (FSC-A vs FSC-H) =====
+    print("\n===== GATE 2: SINGLETS (ALL TREATMENTS AND CONTROLS) =====")
+    
+    # Combine cells data for singlets gating
+    all_cells_data = {**cells_by_treatment, **cells_by_control}
+    singlets_gate_data = {name: df[['FSC-A', 'FSC-H']] for name, df in all_cells_data.items()}
+    
+    # Run interactive gating
+    singlets_results, singlets_vertices = interactive_gate_all_treatments(
+        singlets_gate_data,
+        'FSC-A', 'FSC-H',
+        'Gate 2: Singlets (All Treatments and Controls)'
+    )
+    
+    # Process singlets results
+    singlets_by_treatment = {}
+    singlets_by_control = {}
+    
+    if singlets_results:
+        for name, result in singlets_results.items():
+            singlets_mask = result['mask']
+            
+            if name in cells_by_treatment:
+                singlets_by_treatment[name] = cells_by_treatment[name][singlets_mask]
+                
+                # Save and store gate info for treatments
+                singlets_output_path = os.path.join(output_folder, f'{name}_singlets.csv')
+                singlets_by_treatment[name].to_csv(singlets_output_path, index=False)
+                print(f"{name} singlets data saved to: {singlets_output_path}")
+                
+                gates_info[name]['gates']['singlets'] = {
+                    'type': 'polygon',
+                    'x_channel': 'FSC-A',
+                    'y_channel': 'FSC-H',
+                    'vertices': [[float(x), float(y)] for x, y in singlets_vertices],
+                    'count': result['count'],
+                    'total': result['total'],
+                    'percentage': result['percentage']
+                }
+            elif name in cells_by_control:
+                singlets_by_control[name] = cells_by_control[name][singlets_mask]
         
-        # ===== Process fluorescence channels =====
+        # ===== Interactive Fluorescence Analysis with Controls =====
+        print("\n===== FLUORESCENCE ANALYSIS WITH CONTROLS =====")
+        
         fluor_channels = ['488nm525-40-A', '561nm610-20-A', '638nm660-10-A']
         fluor_labels = ['488nm525-40 (FITC)', '561nm610-20 (PE-TexRed)', '638nm660-10 (APC)']
         
-        print("\n===== FLUORESCENCE CHANNELS ANALYSIS =====")
+        # Interactive gating using controls
+        channel_gates = interactive_fluorescence_gating_with_controls(
+            singlets_by_treatment, 
+            singlets_by_control, 
+            fluor_channels, 
+            fluor_labels
+        )
         
-        # Create a comparison dataframe to store all results
-        comparison_data = []
-        
-        # Process each fluorescence channel
-        for ch, label in zip(fluor_channels, fluor_labels):
-            print(f"\nAnalyzing {label} across all treatments...")
-            
-            # Compare fluorescence ratios using WT as reference
-            fluor_results, threshold = compare_fluorescence_ratios(
-                singlets_by_treatment,
-                reference_treatment=reference_treatment,
-                channel=ch,
-                percentile=75  # Top 25%
+        if channel_gates:
+            # Apply gates to treatment data
+            print("\n===== APPLYING GATES TO TREATMENTS =====")
+            fluor_results = apply_gates_to_treatments(
+                singlets_by_treatment, 
+                channel_gates, 
+                fluor_channels, 
+                fluor_labels
             )
             
-            # Process and save results for each treatment
-            for treatment, result in fluor_results.items():
-                # Get the gated data and save
-                fluor_gated = result['data']
-                fluor_output_path = os.path.join(output_folder, f'{treatment}_{ch}_top25pct.csv')
-                fluor_gated.to_csv(fluor_output_path, index=False)
+            # Save results and create comparison data
+            comparison_data = []
+            
+            for channel in channel_gates.keys():
+                if channel in fluor_results:
+                    for treatment, result in fluor_results[channel].items():
+                        # Save gated data
+                        fluor_gated = result['data']
+                        fluor_output_path = os.path.join(output_folder, f'{treatment}_{channel}_positive.csv')
+                        fluor_gated.to_csv(fluor_output_path, index=False)
+                        
+                        # Store gate info
+                        gates_info[treatment]['gates'][f'{channel}_positive'] = {
+                            'type': 'polygon',
+                            'x_channel': 'FSC-A',
+                            'y_channel': channel,
+                            'vertices': [[float(x), float(y)] for x, y in result['gate_vertices']],
+                            'count': result['count'],
+                            'total': result['total'],
+                            'percentage': result['percentage'],
+                            'set_from_controls': True
+                        }
+                        
+                        # Add to comparison data
+                        channel_idx = fluor_channels.index(channel) if channel in fluor_channels else 0
+                        display_name = fluor_labels[channel_idx] if channel_idx < len(fluor_labels) else channel
+                        
+                        comparison_data.append({
+                            'Treatment': treatment,
+                            'Channel': channel,
+                            'Display_Name': display_name,
+                            'Gate_Type': 'polygon',
+                            'Count_Positive': result['count'],
+                            'Total_Cells': result['total'],
+                            'Percentage': result['percentage'],
+                            'Set_From_Controls': True
+                        })
+            
+            # Save comparison data
+            if comparison_data:
+                comparison_df = pd.DataFrame(comparison_data)
+                comparison_df.to_csv(comparison_csv_path, index=False)
+                print(f"\nComparison data saved to: {comparison_csv_path}")
+            
+            # Create consolidated dataset with all cells and their fluorescence status
+            print("\n===== CREATING CONSOLIDATED DATASET =====")
+            consolidated_data = []
+            
+            for treatment, data in singlets_by_treatment.items():
+                print(f"Processing {treatment} for consolidated dataset...")
                 
-                # Store gate info
-                gates_info[treatment]['gates'][f'{ch}_top25pct'] = {
-                    'type': 'ratio',
-                    'ratio_channel': ch,
-                    'reference_channel': 'FSC-A',
-                    'threshold': result['threshold'],
-                    'count': result['count'],
-                    'total': result['total'],
-                    'percentage': result['percentage'],
-                    'reference_treatment': reference_treatment
-                }
+                # Get fluorescence status for each cell
+                fluor_status = {}
+                for channel in fluor_channels:
+                    if channel in fluor_results and treatment in fluor_results[channel]:
+                        fluor_status[channel] = fluor_results[channel][treatment]['mask']
+                    else:
+                        # If no gate was drawn for this channel, mark all as negative
+                        fluor_status[channel] = np.zeros(len(data), dtype=bool)
                 
-                # Add to comparison data
-                comparison_data.append({
-                    'Treatment': treatment,
-                    'Channel': ch,
-                    'Display_Name': label,
-                    'Threshold': result['threshold'],
-                    'Count_Above': result['count'],
-                    'Total_Cells': result['total'],
-                    'Percentage': result['percentage'],
-                    'Reference': treatment == reference_treatment
-                })
-        
-        # Create and save comparison CSV
-        comparison_df = pd.DataFrame(comparison_data)
-        comparison_df.to_csv(comparison_csv_path, index=False)
-        print(f"\nComparison data saved to: {comparison_csv_path}")
-        
-        # Save all gates info to JSON file
-        with open(gates_info_path, 'w') as f:
-            json.dump(gates_info, f, indent=2)
-        print(f"\nGates information saved to: {gates_info_path}")
-        
-        # Create a summary table of fluorescence channel comparisons
-        print("\n===== FLUORESCENCE SUMMARY =====")
+                # Add each cell to consolidated data
+                for idx in range(len(data)):
+                    cell_data = {
+                        'Treatment': treatment,
+                        'Cell_ID': f"{treatment}_{idx}",
+                        'FSC-A': data['FSC-A'].iloc[idx],
+                        'SSC-A': data['SSC-A'].iloc[idx],
+                        'FSC-H': data['FSC-H'].iloc[idx],
+                        '488nm525-40-A': data['488nm525-40-A'].iloc[idx],
+                        '561nm610-20-A': data['561nm610-20-A'].iloc[idx], 
+                        '638nm660-10-A': data['638nm660-10-A'].iloc[idx],
+                        '488_positive': fluor_status['488nm525-40-A'][idx] if '488nm525-40-A' in fluor_status else False,
+                        '561_positive': fluor_status['561nm610-20-A'][idx] if '561nm610-20-A' in fluor_status else False,
+                        '638_positive': fluor_status['638nm660-10-A'][idx] if '638nm660-10-A' in fluor_status else False
+                    }
+                    consolidated_data.append(cell_data)
+            
+            # Save consolidated dataset
+            consolidated_df = pd.DataFrame(consolidated_data)
+            consolidated_csv_path = os.path.join(output_folder, 'consolidated_cell_data.csv')
+            consolidated_df.to_csv(consolidated_csv_path, index=False)
+            print(f"Consolidated cell data saved to: {consolidated_csv_path}")
+            print(f"Total cells in consolidated dataset: {len(consolidated_df)}")
+            
+            # Save gates info
+            with open(gates_info_path, 'w') as f:
+                json.dump(gates_info, f, indent=2)
+            print(f"\nGates information saved to: {gates_info_path}")
+            
+            print("\n===== ANALYSIS COMPLETE =====")
+            print("Polygon gates were drawn using control samples and applied to treatment data.")
+            print("Check the saved CSV files for detailed results.")
+            print("Positive cells for each channel/treatment have been identified and saved.")
+        else:
+            print("No gates were created. Analysis incomplete.")
+    else:
+        print("Singlets gating failed. Cannot proceed with fluorescence analysis.")
+else:
+    print("Cells gating failed. Cannot proceed with analysis.")

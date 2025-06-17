@@ -1,3 +1,4 @@
+print("Importing packages...")
 import os
 import numpy as np
 import pandas as pd
@@ -12,10 +13,9 @@ import threading
 from cellpose import models
 import napari
 
-print("Imported")
 
 #%%
-print("Continued")
+print("Initialising window...")
 preprocessed_image = None
 segmented_image = None
 root_window = None

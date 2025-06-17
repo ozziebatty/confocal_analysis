@@ -9,8 +9,6 @@ import tifffile
 
 # Global variables
 loaded_project = True
-project_path = "/Users/oskar/Desktop/format_test"
-foldername = "/Users/oskar/Desktop/format_test"
 
 #%%
 def create_project_window():
@@ -27,10 +25,10 @@ def create_project_window():
             messagebox.showerror("Input Error", "At least one channel name field must be filled.")
             return
 
-        if contains_nuclear_var.get():
-            nuclear_index = nuclear_var.get()
-            if nuclear_index == -1 or not channel_names[nuclear_index]:
-                messagebox.showerror("Input Error", "Nuclear channel must be a valid, non-empty channel.")
+        if contains_segmentation_var.get():
+            segmentation_index = segmentation_var.get()
+            if segmentation_index == -1 or not channel_names[segmentation_index]:
+                messagebox.showerror("Input Error", "Segmentation channel must be a valid, non-empty channel.")
                 return
 
         # Create destination if it doesn't exist
@@ -51,10 +49,10 @@ def create_project_window():
         try:
             with open(os.path.join(dest_folder, "channel_details.csv"), mode='w', newline='') as file:
                 writer = csv.writer(file)
-                writer.writerow(["Channel", "Nuclear Channel"])
+                writer.writerow(["channel", "segmentation_channel"])
                 for idx, name in enumerate(channel_names):
                     if name:  # Only write non-empty channel names
-                        writer.writerow([name, 'Yes' if nuclear_var.get() == idx else 'No'])
+                        writer.writerow([name, 'yes' if segmentation_var.get() == idx else 'No'])
         except Exception as e:
             messagebox.showerror("File Error", f"Error saving channel details: {str(e)}")
             return
@@ -86,7 +84,7 @@ def create_project_window():
         path = filedialog.askopenfilename() or filedialog.askdirectory()
         if path:
             file_entry.delete(0, tk.END)
-            file_entry.insert(0, path)
+            file_entry.insert(0, os.path.normpath(path))
 
     tk.Button(input_frame, text="Browse", command=browse_input).pack(side=tk.LEFT)
     
@@ -98,21 +96,21 @@ def create_project_window():
     dest_folder_entry.pack(side=tk.LEFT, padx=5)
     
     def browse_destination():
-        foldername = filedialog.askdirectory()
-        if foldername:
+        project_path = filedialog.askdirectory()
+        if project_path:
             dest_folder_entry.delete(0, tk.END)
-            dest_folder_entry.insert(0, foldername)
+            dest_folder_entry.insert(0, os.path.normpath(project_path))
 
     tk.Button(dest_frame, text="Browse", command=browse_destination).pack(side=tk.LEFT)
     
-    # Nuclear channel option
-    nuclear_frame = tk.Frame(frame)
-    nuclear_frame.pack(fill=tk.X, pady=5)
+    # segmentation channel option
+    segmentation_frame = tk.Frame(frame)
+    segmentation_frame.pack(fill=tk.X, pady=5)
     
-    contains_nuclear_var = tk.BooleanVar()
-    tk.Checkbutton(nuclear_frame, text="Contains Nuclear Channel", variable=contains_nuclear_var).pack(anchor="w")
+    contains_segmentation_var = tk.BooleanVar()
+    tk.Checkbutton(segmentation_frame, text="Contains Segmentation Channel", variable=contains_segmentation_var).pack(anchor="w")
     
-    nuclear_var = tk.IntVar(value=-1)
+    segmentation_var = tk.IntVar(value=-1)
     
     # Channel entries
     channels_frame = tk.LabelFrame(frame, text="Channel Names")
@@ -130,7 +128,7 @@ def create_project_window():
         entry.pack(side=tk.LEFT, padx=5)
         channel_entries.append(entry)
         
-        radio = tk.Radiobutton(channel_frame, text="Nuclear", variable=nuclear_var, value=i)
+        radio = tk.Radiobutton(channel_frame, text="Segmentation", variable=segmentation_var, value=i)
         radio.pack(side=tk.LEFT)
         radio_buttons.append(radio)
         
@@ -138,13 +136,13 @@ def create_project_window():
         radio.config(state=tk.DISABLED)
     
     # Function to toggle radio buttons
-    def toggle_nuclear_options():
-        state = tk.NORMAL if contains_nuclear_var.get() else tk.DISABLED
+    def toggle_segmentation_options():
+        state = tk.NORMAL if contains_segmentation_var.get() else tk.DISABLED
         for rb in radio_buttons:
             rb.config(state=state)
     
     # Bind checkbox to toggle function
-    contains_nuclear_var.trace("w", lambda *args: toggle_nuclear_options())
+    contains_segmentation_var.trace("w", lambda *args: toggle_segmentation_options())
     
     # Buttons
     button_frame = tk.Frame(frame)
@@ -153,21 +151,23 @@ def create_project_window():
     tk.Button(button_frame, text="Cancel", command=project_window.destroy, width=10).pack(side=tk.LEFT, padx=5)
     tk.Button(button_frame, text="Create Project", command=create_project, width=15).pack(side=tk.LEFT, padx=5)
 
-def define_parameters_window(image):
+def define_parameters_window():
 
-    loaded_project = True
-    project_path = foldername  
-            
-    if not loaded_project:
+    # ====== STEP 1: FILE PATHS AND ERROR CHECKING ======
+
+    if not project_path:
         messagebox.showerror("Error", "Please load a project first.")
         return
     
-    #input_image_path = filedialog.askopenfilename(title="Select Sample Image File")
+    print("PROJECT PATH - ", project_path)
 
+    input_image_path = filedialog.askopenfilename(title="Select Sample Image File")
+    input_parameters_path = os.path.join(project_path, 'parameters_template.csv')
+    output_parameters_path = os.path.join(project_path, 'parameters.csv')
+
+    print("IMPORTING PACKAGES...")
     import numpy as np
-    import tifffile
     import pandas as pd
-    import os
     from skimage.exposure import equalize_adapthist
     from skimage import img_as_ubyte
     import napari
@@ -181,20 +181,16 @@ def define_parameters_window(image):
     # Store current slice information as global variables for easy access
     current_z = 0
     #current_channel = 0
+    changed_channel = False
     
-    #processed_image = None
     segmentation_selected = True
 
-    # ====== STEP 1: FILE PATHS AND ERROR CHECKING ======
-    #input_image_path = '/Users/oskar/Desktop/format_test/test.lsm'
-    input_parameters_csv = '/Users/oskar/Desktop/format_test/parameters.csv'
-
     # ====== STEP 2: LOAD DATA ======
-    print("INPUT PATH - ", input_image_path)
+    print("INPUT IMAGE PATH - ", input_image_path)
     try:
         # Load image
-        print(input_image_path)
-        #image = tifffile.imread(input_image_path)
+        print("Loading image...")
+        image = tifffile.imread(input_image_path)
         print("Successfully loaded")
         
         # What datatype?
@@ -212,8 +208,8 @@ def define_parameters_window(image):
         
         # Load parameters file
         try:
-            parameters_df = pd.read_csv(input_parameters_csv)
-            required_columns = ['Parameter', 'Process', 'Channel', 'Default Value', 'Min', 'Max', 'Data type', 'Must be odd']
+            parameters_df = pd.read_csv(input_parameters_path)
+            required_columns = ['parameter', 'process', 'channel', 'default_value', 'min', 'max', 'data_type', 'must_be_odd']
             if not all(col in parameters_df.columns for col in required_columns):
                 raise ValueError(f"Parameters CSV must contain columns: {required_columns}")
         except Exception as e:
@@ -236,9 +232,9 @@ def define_parameters_window(image):
 
     # Initialize parameter values from the CSV
     for _, row in parameters_df.iterrows():
-        parameter_name = row['Parameter']
-        channel = row['Channel']
-        default_value = row['Default Value']
+        parameter_name = row['parameter']
+        channel = row['channel']
+        default_value = row['default_value']
         parameter_value = default_value
         # Use default if value is NaN
         
@@ -264,8 +260,8 @@ def define_parameters_window(image):
     param_min_max = {}
 
     for _, row in parameters_df.iterrows():
-        param_name = row['Parameter']
-        dtype_str = row['Data type']
+        param_name = row['parameter']
+        dtype_str = row['data_type']
         
         
         cast = dtype_map.get(dtype_str)
@@ -274,15 +270,35 @@ def define_parameters_window(image):
 
         # Safely cast min/max using the type
         try:
-            min_val = cast(row['Min'])
-            max_val = cast(row['Max'])
+            min_val = cast(row['min'])
+            max_val = cast(row['max'])
         except Exception as e:
             raise ValueError(f"Error casting min/max for parameter '{param_name}': {e}")
 
         param_min_max[param_name] = {'min': min_val, 'max': max_val}
         
     print("Parameter min/max values:", param_min_max)
-    print("Channel parameters:", channel_parameters)   
+    print("Channel parameters:", channel_parameters) 
+    print("Global parameters:", global_parameters)
+
+    def find_segmentation_channel():
+        channel_details_path = os.path.join(project_path, 'channel_details.csv')
+        try:
+            df = pd.read_csv(channel_details_path)
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Cannot find file: {channel_details_path}")
+        
+        if 'channel' not in df.columns or 'segmentation_channel' not in df.columns:
+            raise ValueError("CSV must have 'channel' and 'segmentation_channel' columns")
+        
+        segmentation_rows = df[df['segmentation_channel'].str() == 'yes']
+        if len(segmentation_rows) != 1:
+            raise ValueError("Must have exactly one segmentation channel marked as 'yes'")
+        
+        return segmentation_rows.index[0]
+
+    segmentation_channel = find_segmentation_channel()
+    print("segmentation channel is", segmentation_channel)
         
     # ====== STEP 3: DEFINE PROCESSING FUNCTIONS ======
     def apply_CLAHE(image_slice, kernel_size=16, clip_limit=0.005, n_bins=11):
@@ -346,82 +362,106 @@ def define_parameters_window(image):
     # ====== STEP 4: CREATE NAPARI VIEWER ======
     viewer = napari.Viewer()
 
-    # ====== STEP 6: PREPROCESSING FUNCTION ======
+    # ====== STEP 5: PREPROCESSING FUNCTION ======
     def apply_preprocessing(current_z, current_channel):
         """Apply selected preprocessing steps to the current slice"""
-        global processed_image
+        global processed_slice, processed_segmentation_slice
         
         try:
             # Get the original slice using global variables
             original_slice = image[current_z, current_channel, :, :]
-            processed = original_slice.copy()
+            processed_slice = original_slice.copy()
             
             # Get selected processes from the global process_enabled dictionary
             selected_processes = [process for process, enabled in process_enabled.items() if enabled]
-                        
+
             # Safely get channel-specific parameters, fallback to empty dict
-            channel_params = channel_parameters.get(current_channel, {})
+            this_channel_parameters = channel_parameters.get(current_channel, {})
 
             # Apply processing steps
             for process in selected_processes:
                 if process == 'CLAHE':
-                    kernel_size = int(channel_params.get('CLAHE_kernel_size', 16))
-                    clip_limit = float(channel_params.get('CLAHE_clip_limit', 0.005))
-                    n_bins = int(channel_params.get('CLAHE_n_bins', 11))
-                    processed = apply_CLAHE(processed, kernel_size, clip_limit, n_bins)
+                    kernel_size = int(this_channel_parameters.get('CLAHE_kernel_size', 16))
+                    clip_limit = float(this_channel_parameters.get('CLAHE_clip_limit', 0.005))
+                    n_bins = int(this_channel_parameters.get('CLAHE_n_bins', 11))
+                    processed_slice = apply_CLAHE(processed_slice, kernel_size, clip_limit, n_bins)
                     
                 elif process == 'Gaussian':
-                    kernel_size = int(channel_params.get('gaussian_kernel_size', 11))
-                    sigma = float(channel_params.get('gaussian_sigma', 0.4))
-                    processed = apply_Gaussian(processed, kernel_size, sigma)
+                    kernel_size = int(this_channel_parameters.get('gaussian_kernel_size', 11))
+                    sigma = float(this_channel_parameters.get('gaussian_sigma', 0.4))
+                    processed_slice = apply_Gaussian(processed_slice, kernel_size, sigma)
         
             # Store the processed image for segmentation
-            processed_image = processed
+            if current_channel == segmentation_channel:
+                processed_segmentation_slice = processed_slice
             
             # Update viewer
             if "Preprocessed" in viewer.layers:
-                viewer.layers["Preprocessed"].data = processed
+                viewer.layers["Preprocessed"].data = processed_slice
             else:
-                viewer.add_image(processed, name="Preprocessed")
+                viewer.add_image(processed_slice, name="Preprocessed")
 
-            return processed_image
+            return processed_slice
         except Exception as e:
             print(f"Error during preprocessing: {str(e)}")
             return False
     
-    # ====== STEP 5: SLICE SELECTION WIDGET ======
+    # ====== STEP 6: SLICE SELECTION WIDGET ======
     @magicgui(
         z_slice={"label": "Z slice", "widget_type": "Slider", "min": 0, "max": total_z-1},
         channel={"label": "Channel", "widget_type": "Slider", "min": 0, "max": total_channels-1}, auto_call=True
     )
     def update_slice(z_slice=1, channel=0):
         """Select a z-slice and channel to view"""
+        global current_z, current_channel, changed_channel
+        
+        # Update global variables
+        previous_channel = -1
+        current_z = z_slice
+        current_channel = channel
+
+        if current_channel != previous_channel:
+            changed_channel = True
+        #print("Current channel when updating:", current_channel)
+        
+        # Get the original slice
+        original_slice = image[z_slice, channel, :, :]
+    
+        # Update viewer
+        if "unprocessed" in viewer.layers:
+            viewer.layers["unprocessed"].data = original_slice
+        else:
+            viewer.add_image(original_slice, name="unprocessed")
+            
+        # Automatically apply preprocessing after changing slice
+        processed_slice = apply_preprocessing(current_z, current_channel)
+        
+        update_sliders(current_channel)
+
+        return processed_slice
+
+    def refresh_current_slice():
+        """Refresh the current slice without changing z or channel"""
         global current_z, current_channel
         
-        try:
-            # Update global variables
-            current_z = z_slice
-            current_channel = channel
-            #print("Current channel when updating:", current_channel)
-            
-            # Get the original slice
-            original_slice = image[z_slice, channel, :, :]
+        # Use current global values, with fallbacks
+        z_slice = current_z if 'current_z' in globals() else 1
+        channel = current_channel if 'current_channel' in globals() else 0
         
-            # Update viewer
-            if "unprocessed" in viewer.layers:
-                viewer.layers["unprocessed"].data = original_slice
-            else:
-                viewer.add_image(original_slice, name="unprocessed")
-                
-            # Automatically apply preprocessing after changing slice
-            preprocessed_image = apply_preprocessing(current_z, current_channel)
-            
-            update_sliders(current_channel)
+        # Get the original slice
+        original_slice = image[z_slice, channel, :, :]
 
-            return preprocessed_image
-        except Exception as e:
-            print(f"Error selecting slice: {str(e)}")
-            return False
+        # Update viewer
+        if "unprocessed" in viewer.layers:
+            viewer.layers["unprocessed"].data = original_slice
+        else:
+            viewer.add_image(original_slice, name="unprocessed")
+        
+        # Automatically apply preprocessing after changing slice
+        processed_slice = apply_preprocessing(current_z, current_channel)
+    
+        update_sliders(current_channel)
+        return processed_slice
 
     # ====== STEP 7: CREATE PARAMETER WIDGETS ======
     # Process selection widget
@@ -431,7 +471,7 @@ def define_parameters_window(image):
     def on_process_toggle(process_name, value):
         process_enabled[process_name] = value
         # Apply preprocessing to update the image
-        update_slice(z_slice=current_z, channel=current_channel)
+        refresh_current_slice()
 
     # Add checkboxes for each process
     for process in available_processes:
@@ -449,36 +489,31 @@ def define_parameters_window(image):
         gaussian_sigma=None,
     ):
         try:
-            # Use latest parameters if values are not passed in
-            if current_channel not in channel_parameters:
-                channel_parameters[current_channel] = {}
+            # Add a flag to prevent processing during slider updates
+            global changed_channel, updating_sliders
+            
+            # Skip processing if we're currently updating sliders
+            if updating_sliders:
+                return True
 
-            if clahe_kernel_size is None:
+            if changed_channel == True:
                 clahe_kernel_size = channel_parameters[current_channel]['CLAHE_kernel_size']
-            if clahe_clip_limit is None:
                 clahe_clip_limit = channel_parameters[current_channel]['CLAHE_clip_limit']
-            if clahe_n_bins is None:
                 clahe_n_bins = channel_parameters[current_channel]['CLAHE_n_bins']
-            if gaussian_kernel_size is None:
                 gaussian_kernel_size = channel_parameters[current_channel]['gaussian_kernel_size']
-            if gaussian_sigma is None:
                 gaussian_sigma = channel_parameters[current_channel]['gaussian_sigma']
-
-            # Map slider values logarithmically if needed (currently disabled)
-            # clahe_clip_min = param_min_max['CLAHE_clip_limit']['min']
-            # clahe_clip_max = param_min_max['CLAHE_clip_limit']['max']
-            # gaussian_sigma_min = param_min_max['gaussian_sigma']['min']
-            # gaussian_sigma_max = param_min_max['gaussian_sigma']['max']
+                changed_channel = False
 
             # Store updated CLAHE parameters
-            channel_parameters[current_channel]['CLAHE_kernel_size'] = clahe_kernel_size
-            channel_parameters[current_channel]['CLAHE_clip_limit'] = clahe_clip_limit
-            channel_parameters[current_channel]['CLAHE_n_bins'] = clahe_n_bins
-            channel_parameters[current_channel]['gaussian_kernel_size'] = gaussian_kernel_size
-            channel_parameters[current_channel]['gaussian_sigma'] = gaussian_sigma
+            else:
+                channel_parameters[current_channel]['CLAHE_kernel_size'] = clahe_kernel_size
+                channel_parameters[current_channel]['CLAHE_clip_limit'] = clahe_clip_limit
+                channel_parameters[current_channel]['CLAHE_n_bins'] = clahe_n_bins
+                channel_parameters[current_channel]['gaussian_kernel_size'] = gaussian_kernel_size
+                channel_parameters[current_channel]['gaussian_sigma'] = gaussian_sigma
 
             # Apply preprocessing using updated parameters
-            update_slice(z_slice=current_z, channel=current_channel)
+            refresh_current_slice()
 
             return True
 
@@ -505,13 +540,23 @@ def define_parameters_window(image):
         )(processing_parameters_function)
 
     def update_sliders(current_channel):
+        global updating_sliders
+                
+        # Set flag to prevent processing during updates
+        updating_sliders = True
         
-        processing_parameters['clahe_kernel_size'].value = channel_parameters[current_channel]['CLAHE_kernel_size']
-        processing_parameters['clahe_clip_limit'].value = channel_parameters[current_channel]['CLAHE_clip_limit']
-        processing_parameters['clahe_n_bins'].value = channel_parameters[current_channel]['CLAHE_n_bins']
-        processing_parameters['gaussian_kernel_size'].value = channel_parameters[current_channel]['gaussian_kernel_size']
-        processing_parameters['gaussian_sigma'].value = channel_parameters[current_channel]['gaussian_sigma']
+        try:
+            processing_parameters['clahe_kernel_size'].value = channel_parameters[current_channel]['CLAHE_kernel_size']
+            processing_parameters['clahe_clip_limit'].value = channel_parameters[current_channel]['CLAHE_clip_limit']
+            processing_parameters['clahe_n_bins'].value = channel_parameters[current_channel]['CLAHE_n_bins']
+            processing_parameters['gaussian_kernel_size'].value = channel_parameters[current_channel]['gaussian_kernel_size']
+            processing_parameters['gaussian_sigma'].value = channel_parameters[current_channel]['gaussian_sigma']
+        finally:
+            # Always reset the flag, even if there's an error
+            updating_sliders = False
 
+    # Initialize the flag
+    updating_sliders = False
 
     # ====== STEP 8: SEGMENTATION WIDGET AND FUNCTION ======
     # Segmentation widget without run button
@@ -539,9 +584,9 @@ def define_parameters_window(image):
             """Set parameters for Cellpose segmentation"""
             try:
                 # Store parameters
-                param_values['cell_diameter'] = cell_diameter
-                param_values['flow_threshold'] = flow_threshold
-                param_values['cellprob_threshold'] = cellprob_threshold
+                global_parameters['cell_diameter'] = cell_diameter
+                global_parameters['flow_threshold'] = flow_threshold
+                global_parameters['cellprob_threshold'] = cellprob_threshold
                 
                 # Run segmentation with new parameters
                 run_segmentation()
@@ -553,82 +598,72 @@ def define_parameters_window(image):
         
         # Function to actually run the segmentation
         def run_segmentation():
+            global current_z
             """Run Cellpose segmentation on the current image"""
-            try:
-                # Get parameters
-                cell_diameter = float(param_values.get('cell_diameter', 8.0))
-                flow_threshold = float(param_values.get('flow_threshold', 0.5))
-                cellprob_threshold = float(param_values.get('cellprob_threshold', 0.5))
-                
-                # Get the current processed image
-                if processed_image is None:
-                    image_to_segment = update_slice(z_slice=current_z, channel=current_channel)
-                else:
-                    image_to_segment = processed_image
+            # Get parameters
+            cell_diameter = float(global_parameters['cell_diameter'])
+            flow_threshold = float(global_parameters['flow_threshold'])
+            cellprob_threshold = float(global_parameters['cellprob_threshold'])
+            
+            # Get the current processed image
+            print("Segmenting on z-slice:", current_z, "channel:", segmentation_channel)
+            if processed_slice is None:
+                image_to_segment = update_slice(z_slice=current_z, channel=segmentation_channel)
+            else:
+                image_to_segment = apply_preprocessing(current_z, segmentation_channel)
 
-                # Apply segmentation
-                masks, outlines = apply_segmentation(image_to_segment, cell_diameter, flow_threshold, cellprob_threshold)
-                
-                # Add or update segmentation layers
-                if "Segmentation" in viewer.layers:
-                    viewer.layers["Segmentation"].data = masks
-                else:
-                    # Add as labels layer with random colors
-                    viewer.add_labels(masks, name="Segmentation", visible=False)
-                
-                # Add or update cell outlines layer
-                if "Cell Outlines" in viewer.layers:
-                    viewer.layers["Cell Outlines"].data = outlines
-                else:
-                    # Add binary outlines as labels layer
-                    viewer.add_labels(outlines.astype(np.uint8), name="Cell Outlines")
-                
-                print("Segmentation complete and displayed")
-                return True
-            except Exception as e:
-                print(f"Error during segmentation: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                return False
+            # Apply segmentation
+            masks, outlines = apply_segmentation(image_to_segment, cell_diameter, flow_threshold, cellprob_threshold)
+            
+            # Add or update segmentation layers
+            if "Segmentation" in viewer.layers:
+                viewer.layers["Segmentation"].data = masks
+            else:
+                # Add as labels layer with random colors
+                viewer.add_labels(masks, name="Segmentation", visible=False)
+            
+            # Add or update cell outlines layer
+            if "Cell Outlines" in viewer.layers:
+                viewer.layers["Cell Outlines"].data = outlines
+            else:
+                # Add binary outlines as labels layer
+                viewer.add_labels(outlines.astype(np.uint8), name="Cell Outlines")
+            
+            print("Segmentation complete")
 
     # ====== STEP 9: SAVE PARAMETERS FUNCTION ======
     @magicgui(call_button="Save Parameters")
     def save_parameters():
+        # Create a copy of the original dataframe to preserve structure
+        updated_df = parameters_df.copy()
+        
+        # Update the 'Default Value' column with current values
+        for index, row in updated_df.iterrows():
+            parameter_name = row['parameter']
+            channel = row['channel']
+            
+            # Check if this is a channel-specific parameter
+            if pd.notnull(channel):
+                try:
+                    channel_num = int(channel)
+                    if channel_num in channel_parameters and parameter_name in channel_parameters[channel_num]:
+                        updated_df.at[index, 'value'] = channel_parameters[channel_num][parameter_name]
+                except ValueError:
+                    # Not a valid channel number, check global parameters
+                    if parameter_name in global_parameters:
+                        updated_df.at[index, 'value'] = global_parameters[parameter_name]
+            else:
+                # Global parameter
+                if parameter_name in global_parameters:
+                    updated_df.at[index, 'value'] = global_parameters[parameter_name]
+        
+        # Save to CSV
         try:
-            # Create a copy of the parameters_df to modify
-            updated_df = parameters_df.copy()
-            
-            # Ensure 'Enabled' column exists in the dataframe
-            if 'Enabled' not in updated_df.columns:
-                updated_df['Enabled'] = 'FALSE'
-            
-            # Update parameters DataFrame with current values
-            for param_name, value in param_values.items():
-                mask = updated_df['Parameter'] == param_name
-                if any(mask):
-                    # Update 'Value' column if it exists, otherwise add it
-                    if 'Value' not in updated_df.columns:
-                        updated_df['Value'] = np.nan
-                    updated_df.loc[mask, 'Value'] = value
-                    
-                    # Update the 'Enabled' column based on process_enabled dictionary
-                    process = updated_df.loc[mask, 'Process'].iloc[0]
-                    if process in process_enabled:
-                        updated_df.loc[mask, 'Enabled'] = str(process_enabled[process]).upper()
-            
-            # Save to CSV
-            output_params_path = os.path.join(os.path.dirname(input_parameters_csv), 'parameters_updated.csv')
-            updated_df.to_csv(output_params_path, index=False)
-            
-            print(f"Parameters saved successfully to {output_params_path}")
-            
-            # Close Napari viewer
-            viewer.close()
-            
-            return True
+            updated_df.to_csv(output_parameters_path, index=False)
+            print(f"Parameters successfully saved to {output_parameters_path}")
         except Exception as e:
-            print(f"Error saving parameters: {str(e)}")
-            return False
+            print(f"Error saving parameters to CSV: {str(e)}")
+            raise
 
     # ====== STEP 10: ADD WIDGETS TO VIEWER ======
     # Add the slice selection
@@ -678,8 +713,8 @@ def run_analysis_window():
     processes_path = os.path.join(project_root, 'processes.csv')
     if os.path.exists(processes_path):
         processes_df = pd.read_csv(processes_path)
-        segmentation_row = processes_df[processes_df['Process'] == 'Cellpose Nuclear Segmentation']
-        segmentation_selected = len(segmentation_row) > 0 and segmentation_row['Selected'].values[0] == 'Yes'
+        segmentation_row = processes_df[processes_df['process'] == 'cellpose_nuclear_segmentation']
+        segmentation_selected = len(segmentation_row) > 0 and segmentation_row['selected'].values[0] == 'yes'
     else:
         segmentation_selected = True  # Default to True if file doesn't exist
     
@@ -691,9 +726,9 @@ def run_analysis_window():
         # Extract parameters with correct data type
         params = {}
         for _, row in parameters_df.iterrows():
-            param_name = row['Parameter']
-            param_value = row['Value']
-            data_type = row['Data type']
+            param_name = row['parameter']
+            param_value = row['value']
+            data_type = row['data_type']
             
             if data_type == 'Float':
                 params[param_name] = float(param_value)
@@ -724,18 +759,16 @@ def run_analysis_window():
         cellprob_threshold = 0.1
         iou_threshold = 0.5
     
-    # Determine nuclear channel from channel_details.csv
+    # Determine segmentation channel from channel_details.csv
     channel_path = os.path.join(project_root, 'channel_details.csv')
-    nuclear_channel_idx = 0  # Default to first channel
+    segmentation_channel_idx = 0  # Default to first channel
     
     if os.path.exists(channel_path):
         channel_df = pd.read_csv(channel_path)
-        nuclear_rows = channel_df[channel_df['Nuclear Channel'] == 'Yes']
+        segmentation_rows = channel_df[channel_df['segmentation_channel'] == 'yes']
         
-        if len(nuclear_rows) > 0:
-            # Get the index from the row index (B2 -> index 0, B6 -> index 4)
-            # Assuming B2, B3, B4, etc. correspond to rows 1, 2, 3, etc.
-            nuclear_channel_idx = nuclear_rows.index[0]
+        if len(segmentation_rows) > 0:
+            segmentation_channel_idx = segmentation_rows.index[0]
     
     def apply_preprocessing(image):
         """Apply Gaussian blur and CLAHE preprocessing to image"""
@@ -777,7 +810,7 @@ def run_analysis_window():
         
         print(f"Total cells segmented: {total_cells_segmented}")
         print(f"Cell diameter = {cell_diameter}, Flow threshold = {flow_threshold}, "
-              f"Cellprob threshold = {cellprob_threshold}, Nuclear Channel = {nuclear_channel_idx}")
+              f"Cellprob threshold = {cellprob_threshold}, Segmentation Channel = {segmentation_channel_idx}")
         
         return segmented_image
     
@@ -894,11 +927,11 @@ def run_analysis_window():
                 image_stack = tifffile.imread(tiff_path)
                 print(f"Loaded image with shape: {image_stack.shape}")
                 
-                # Extract nuclear channel
+                # Extract segmentation channel
                 if len(image_stack.shape) > 3:  # If multi-channel
-                    nuclear_slice = image_stack[:, nuclear_channel_idx, :, :]
+                    segmentation_slice = image_stack[:, segmentation_channel_idx, :, :]
                 else:  # Single channel
-                    nuclear_slice = image_stack
+                    segmentation_slice = image_stack
                 
                 preprocessed_image = None
                 segmented_image = None
@@ -906,7 +939,7 @@ def run_analysis_window():
                 # Run preprocessing if selected
                 if "Preprocessing" in selected_processes:
                     print(f"{datetime.now():%H:%M:%S} - Starting preprocessing")
-                    preprocessed_image = apply_preprocessing(nuclear_slice)
+                    preprocessed_image = apply_preprocessing(segmentation_slice)
                     
                     # Save preprocessed image
                     preprocessed_path = os.path.join(output_folder, f"{os.path.splitext(tiff_file)[0]}_preprocessed.tiff")
@@ -917,8 +950,8 @@ def run_analysis_window():
                 if "Segmentation" in selected_processes and segmentation_selected:
                     print(f"{datetime.now():%H:%M:%S} - Starting segmentation")
                     
-                    # Use preprocessed image if available, otherwise use raw nuclear channel
-                    seg_input = preprocessed_image if preprocessed_image is not None else nuclear_slice
+                    # Use preprocessed image if available, otherwise use raw segmentation channel
+                    seg_input = preprocessed_image if preprocessed_image is not None else segmentation_slice
                     
                     # Run 2D segmentation
                     segmented_image = segment_2D(seg_input)
@@ -984,7 +1017,7 @@ def run_analysis_window():
     params_frame = tk.LabelFrame(frame, text="Parameters")
     params_frame.pack(fill=tk.X, pady=10)
     
-    tk.Label(params_frame, text=f"Nuclear Channel: {nuclear_channel_idx}").pack(anchor="w", padx=10)
+    tk.Label(params_frame, text=f"Segmentation Channel: {segmentation_channel_idx}").pack(anchor="w", padx=10)
     if segmentation_selected:
         tk.Label(params_frame, text=f"Cell Diameter: {cell_diameter}").pack(anchor="w", padx=10)
     
@@ -996,107 +1029,83 @@ def run_analysis_window():
     tk.Button(button_frame, text="Start", command=run_full_analysis, width=10).pack(side=tk.LEFT, padx=5)
 
 def choose_processes_window():
-    processes_csv_path = foldername + '/processes.csv'
+    # Use os.path.join for cross-platform path handling
+    processes_csv_path = os.path.join(project_path, 'processes.csv')
     if not loaded_project:
         messagebox.showerror("Error", "Please load a project first.")
         return
-    
+   
     process_window = tk.Toplevel(root)
-    process_window.title("Choose Processes")
-    process_window.geometry("350x450")
-    
+    process_window.title("Choose Segmentation")
+    process_window.geometry("400x300")  # Reduced height since we removed analysis options
+   
     frame = tk.Frame(process_window, padx=20, pady=20)
     frame.pack(fill=tk.BOTH, expand=True)
-    
-    tk.Label(frame, text="Select Processing Options", font=("Arial", 12, "bold")).pack(pady=10)
-    options_frame = tk.Frame(frame)
-    options_frame.pack(fill=tk.BOTH, expand=True)
+   
+    tk.Label(frame, text="Select Segmentation Option", font=("Arial", 12, "bold")).pack(pady=10)
     
     # Segmentation frame with radio buttons (mutually exclusive choices)
-    segmentation_frame = tk.LabelFrame(options_frame, text="Segmentation")
-    segmentation_frame.pack(fill=tk.X, pady=5)
-    
-    # Use a StringVar for radio buttons with an empty default
+    segmentation_frame = tk.LabelFrame(frame, text="Segmentation")
+    segmentation_frame.pack(fill=tk.X, pady=10)
+   
+    # Use a StringVar for radio buttons with "none" as default
     segmentation_choice = tk.StringVar(value="none")
-    
-    # Add a "None" option to allow deselecting both
-    tk.Radiobutton(segmentation_frame, text="No segmentation", 
-                  variable=segmentation_choice, value="none").pack(anchor='w')
-    tk.Radiobutton(segmentation_frame, text="Cellpose nuclear segmentation", 
-                  variable=segmentation_choice, value="nuclear").pack(anchor='w')
-    tk.Radiobutton(segmentation_frame, text="Cellpose cellular segmentation", 
-                  variable=segmentation_choice, value="cellular").pack(anchor='w')
-    
-    # Analysis frame with checkboxes (multiple selections allowed)
-    analysis_frame = tk.LabelFrame(options_frame, text="Analysis")
-    analysis_frame.pack(fill=tk.X, pady=5)
-    
-    analysis_options = {
-        "Intensity Analysis": tk.BooleanVar(),
-        "Shape Analysis": tk.BooleanVar()
-    }
-    
-    for option, var in analysis_options.items():
-        tk.Checkbutton(analysis_frame, text=option, variable=var).pack(anchor="w")
-    
+   
+    # Radio button options
+    tk.Radiobutton(segmentation_frame, text="No segmentation",
+                  variable=segmentation_choice, value="none").pack(anchor='w', pady=2)
+    tk.Radiobutton(segmentation_frame, text="Cellpose nuclear segmentation",
+                  variable=segmentation_choice, value="nuclear").pack(anchor='w', pady=2)
+    tk.Radiobutton(segmentation_frame, text="Cellpose cellular segmentation",
+                  variable=segmentation_choice, value="cellular").pack(anchor='w', pady=2)
+   
     button_frame = tk.Frame(frame)
-    button_frame.pack(pady=10)
-    
+    button_frame.pack(pady=20)
+   
     def save_processes():
-        selected = []
-        
         # Get segmentation choice
         seg_choice = segmentation_choice.get()
         nuclear_selected = (seg_choice == "nuclear")
         cellular_selected = (seg_choice == "cellular")
-        
+       
         # Write to CSV
         with open(processes_csv_path, "w", newline="") as file:
             writer = csv.writer(file)
-            writer.writerow(["Category", "Process", "Selected"])
-            
+            writer.writerow(["category", "process", "selected"])
+           
             # Write segmentation choices
-            writer.writerow(["Segmentation", "Cellpose nuclear segmentation", "Yes" if nuclear_selected else "No"])
-            writer.writerow(["Segmentation", "Cellpose cellular segmentation", "Yes" if cellular_selected else "No"])
-            
-            # Write analysis choices
-            for option, var in analysis_options.items():
-                selected.append(("Analysis", option, var.get()))
-                writer.writerow(["Analysis", option, "Yes" if var.get() else "No"])
-        
-        # Check if any process is selected
-        if not (nuclear_selected or cellular_selected or any(var.get() for var in analysis_options.values())):
-            messagebox.showwarning("Warning", "No processes selected.")
+            writer.writerow(["segmentation", "cellpose_nuclear_segmentation", "yes" if nuclear_selected else "no"])
+            writer.writerow(["segmentation", "cellpose_cellular_segmentation", "yes" if cellular_selected else "no"])
+       
+        # Check if a segmentation process is selected (excluding "none")
+        if seg_choice == "none":
+            messagebox.showwarning("Warning", "No segmentation process selected.")
             return
-        
-        messagebox.showinfo("Processes Saved", "Selected processes have been saved to CSV.")
+       
+        messagebox.showinfo("Process Saved", "Selected segmentation process has been saved to CSV.")
         process_window.destroy()
-    
+   
     tk.Button(button_frame, text="Cancel", command=process_window.destroy, width=10).pack(side=tk.LEFT, padx=5)
     tk.Button(button_frame, text="Save", command=save_processes, width=10).pack(side=tk.LEFT, padx=5)
 
 def load_project():
-    global loaded_project, project_path, foldername
-    '''
-    foldername = filedialog.askdirectory(title="Select Project Folder")
-    if not foldername:
+    global loaded_project, project_path
+    
+    project_path = filedialog.askdirectory(title="Select Project Folder")
+    project_path = os.path.normpath(project_path)  # Normalize path
+    if not project_path:
         return
         
     # Simple validation - just check if the folder exists
-    if not os.path.isdir(foldername):
+    if not os.path.isdir(project_path):
         messagebox.showerror("Error", "Invalid folder.")
         return
         
     loaded_project = True
-    project_path = foldername
-    '''
-    loaded_project = True
-    project_path = "/Users/oskar/Desktop/format_test"
-    foldername = "/Users/oskar/Desktop/format_test"
 
     update_main_page()
     
-    #messagebox.showinfo("Project Loaded", f"Project loaded from {foldername}")
+    #messagebox.showinfo("Project Loaded", f"Project loaded from {project_path}")
 
 def update_main_page():
     print(loaded_project)
@@ -1149,7 +1158,7 @@ def main_menu():
     button_frame = tk.Frame(main_frame)
     button_frame.pack(fill=tk.X, pady=10)
     
-    choose_processes_btn = tk.Button(button_frame, text="Choose Processes", command=choose_processes_window, width=42, state=tk.DISABLED)
+    choose_processes_btn = tk.Button(button_frame, text="Select segmentation options", command=choose_processes_window, width=42, state=tk.DISABLED)
     choose_processes_btn.pack(pady=3)
     
     define_parameters_btn = tk.Button(button_frame, text="Define Parameters", command=define_parameters_window, width=42, state=tk.DISABLED)
@@ -1165,8 +1174,8 @@ main_menu()
 
 #%%
 #input_image_path = "/Users/oskar/Desktop/format_test/SBSO_stellaris_cropped.tiff"
-input_image_path = "/Users/oskar/Desktop/format_test/not needed/SBSO_stellaris.tiff"
+#input_image_path = "/Users/oskar/Desktop/format_test/not needed/SBSO_stellaris.tiff"
 
-image = tifffile.imread(input_image_path)
-define_parameters_window(image)
+#image = tifffile.imread(input_image_path)
+#define_parameters_window(image)
 # %%

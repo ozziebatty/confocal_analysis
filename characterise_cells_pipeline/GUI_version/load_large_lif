@@ -1,45 +1,52 @@
-print("Running")
-
+import os
+from readlif.reader import LifFile
 import tifffile
 import numpy as np
-from aicsimageio import AICSImage
-import napari
 
-# Load file + scene
-filepath = "/Users/oskar/Downloads/SBSO_OPP_NM.lif"
-input_path = '/Users/oskar/Desktop/format_test/SBSO_stellaris.tiff'
+# Input parameters
+input_path = r"Y:\Room225_SharedFolder\Leica_Stellaris5_data\Gastruloids\oskar\SBSO_OPP_NM_two.lif"
+output_dir = r"Y:\Room225_SharedFolder\Leica_Stellaris5_data\Gastruloids\oskar\analysis\SBSO_OPP_NM_two"
+scene_idx = 35
+num_channels = 5
 
-image = tifffile.imread(input_path)
+# Create output directory if it doesn't exist
+os.makedirs(output_dir, exist_ok=True)
 
+# Load the LIF file
+lif = LifFile(input_path)
+print(f"Loaded LIF file with {len(lif.image_list)} images")
 
-print("Image loaded with shape (z, c, y, x):", image.shape, "dtype:", image.dtype)
+# Get the scene
+scene = lif.get_image(scene_idx)
+print(f"Scene {scene_idx}: dims={scene.dims}, channels={scene.channels}, nz={scene.nz}")
 
+# Build corrected 4D array: [channels, z, y, x]
+img_stack = []
 
-img = AICSImage(filepath)
-img.set_scene(66)
+for true_channel in range(num_channels):
+    z_stack = []
+    for z in range(scene.nz):
+        # Calculate the scrambled channel index for this z and true channel
+        # Pattern: 0, 2, 4, 1, 3, 0, 2, 4, 1, 3, ...
+        # This is: (true_channel * 2 + z * 2) % num_channels
+        scrambled_channel = (true_channel * 2 + z * 2) % num_channels
+        
+        #print(f"True channel {true_channel}, Z {z} -> using scrambled channel {scrambled_channel}")
+        
+        # Get frame with the scrambled channel index
+        frame = scene.get_frame(z=z, t=0, c=scrambled_channel)
+        z_stack.append(np.array(frame))
+    
+    img_stack.append(np.array(z_stack))
 
-# Get the image: shape will be (1, 5, 79, 523, 1487)
-data = img.get_image_data("TCZYX")  # Use full dims to avoid confusion
+# Convert to numpy array: shape = [channels, z, y, x]
+img_data = np.array(img_stack)
 
-# Convert to NumPy if needed
-data_np = data.compute() if hasattr(data, "compute") else data
+# Create output filename
+output_path = os.path.join(output_dir, f"scene_{scene_idx:02d}_corrected.tiff")
 
-# Expand with a dummy Sample axis (S=1) → final shape (1, 79, 5, 523, 1487, 1)
-data_final = np.expand_dims(np.moveaxis(data_np, 1, 2), axis=-1)  # TCZYX → TZCYX → TZCYXS
+# Save as TIFF with proper dimension order
+tifffile.imwrite(output_path, img_data, imagej=True)
+print(f"Saved scene {scene_idx} with shape {img_data.shape} to {output_path}")
 
-
-# Launch Napari
-#viewer = napari.Viewer()
-#viewer.add_image(data, name="Scene 66", channel_axis=0, colormap="gray")
-#napari.run()
-
-# Save to TIFF
-output_path = "/Users/oskar/Desktop/format_test/SBSO_image_2.tiff"
-tifffile.imwrite(
-    output_path,
-    data_final,
-    imagej=True,
-    metadata={"axes": "TZCYXS"}
-)
-
-print("Saved:", output_path)
+print("Done!")
