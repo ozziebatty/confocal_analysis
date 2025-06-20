@@ -30,10 +30,8 @@ project_path = os.path.normpath(r"Y:\Room225_SharedFolder\Leica_Stellaris5_data\
 channel_details_path = os.path.join(project_path, 'channel_details.csv')
 replicate_path = os.path.join(project_path, replicate_string)
 characterised_cells_path = os.path.join(replicate_path, f"{replicate_string}_characterised_cells.csv")
-
-file_path = os.path.normpath(r"Y:\Room225_SharedFolder\Leica_Stellaris5_data\Gastruloids\oskar\analysis\SBSO_OPP_NM_two_analysis\replicate_2\replicate_2_characterised_cells.csv")
-gates_directory = os.path.normpath(r"Y:\Room225_SharedFolder\Leica_Stellaris5_data\Gastruloids\oskar\analysis\SBSO_OPP_NM_two_analysis\replicate_2")
-df = pd.read_csv(file_path)
+gates_path = os.path.join(replicate_path, 'gates')
+df = pd.read_csv(characterised_cells_path)
 
 columns = ['cell_number','pixel_count','z_position','channel_0','channel_1','channel_2','channel_3','channel_4']
 channels = ['channel_0', 'channel_1', 'channel_2', 'channel_3', 'channel_4']
@@ -46,7 +44,7 @@ print("Channel names:", channel_names)
 
 #%%
 class InteractiveScatterPlot:
-    def __init__(self, dataframe, columns, channels, save_dir=gates_directory):
+    def __init__(self, dataframe, columns, channels, save_dir=gates_path):
         print("Initializing InteractiveScatterPlot")
         self.df = dataframe
         self.channels = channels
@@ -150,11 +148,21 @@ class InteractiveScatterPlot:
             self.y_max += 0.5
     
     def get_current_population_data(self):
-        """Get data for current input population"""
+        """Get data for current input population - FIXED: Use saved indices when available"""
         print("Getting current population data")
+        
         if self.input_population == "All":
             return self.df
         else:
+            # FIXED: Load from saved indices first
+            saved_indices = self.load_gate_indices(self.input_population)
+            if saved_indices:
+                print(f"Using saved indices for {self.input_population}: {len(saved_indices)} cells")
+                return self.df.iloc[saved_indices]
+            
+            # Fallback to old method if no saved indices
+            print(f"No saved indices found for {self.input_population}, using calculation method")
+            
             # First check current channel combination
             current_key = self.get_channel_key()
             if current_key in self.gates and self.input_population in self.gates[current_key]:
@@ -186,40 +194,40 @@ class InteractiveScatterPlot:
         
     def setup_plot(self):
         print("Setting up plot")
-        # Create figure with smaller height
-        self.fig = plt.figure(figsize=(14, 7))
+        # Create figure with larger size - CHANGED: Increased from (14, 7) to (18, 10)
+        self.fig = plt.figure(figsize=(18, 10))
         
         #LEFT BOTTOM WIDTH HEIGHT
 
-        # Main scatter plot - larger
+        # Main scatter plot - larger and scaled proportionally
         self.ax_main = plt.axes([0.08, 0.35, 0.55, 0.6])
         
-    # Control panel layout - top right - CHANGED: Extended axis boxes down even more, shifted everything down
-        # Channel selection dropdowns - CHANGED: Extended downward by extra 50%
-        self.ax_x_dropdown = plt.axes([0.68, 0.68, 0.12, 0.225])  # Extended from 0.15 to 0.225 height (50% more)
-        self.ax_y_dropdown = plt.axes([0.82, 0.68, 0.12, 0.225])  # Extended from 0.15 to 0.225 height (50% more)
+        # Control panel layout - top right - scaled for larger window
+        # Channel selection dropdowns - scaled up
+        self.ax_x_dropdown = plt.axes([0.68, 0.68, 0.14, 0.25])  # Increased width and height
+        self.ax_y_dropdown = plt.axes([0.84, 0.68, 0.14, 0.25])  # Increased width and height
 
-        # Log scale dropdowns - CHANGED: Shifted down more
-        self.ax_x_log_dropdown = plt.axes([0.68, 0.58, 0.12, 0.07])  # Moved down from 0.65
-        self.ax_y_log_dropdown = plt.axes([0.82, 0.58, 0.12, 0.07])  # Moved down from 0.65
+        # Log scale dropdowns - scaled up
+        self.ax_x_log_dropdown = plt.axes([0.68, 0.58, 0.14, 0.08])  # Increased width and height
+        self.ax_y_log_dropdown = plt.axes([0.84, 0.58, 0.14, 0.08])  # Increased width and height
 
-        # Display proportion and population - CHANGED: Shifted down more
-        self.ax_prop_dropdown = plt.axes([0.68, 0.48, 0.12, 0.07])  # Moved down from 0.55
-        self.ax_pop_dropdown = plt.axes([0.82, 0.3, 0.12, 0.25])  # Moved down from 0.37
+        # Display proportion and population - scaled up
+        self.ax_prop_dropdown = plt.axes([0.68, 0.48, 0.14, 0.08])  # Increased width and height
+        self.ax_pop_dropdown = plt.axes([0.84, 0.3, 0.14, 0.28])   # Increased width and height
 
-        # Gate information display - CHANGED: Shifted down more
-        self.ax_gate_info = plt.axes([0.68, 0.02, 0.26, 0.25])  # Moved down from 0.1, reduced height to fit
+        # Gate information display - scaled up
+        self.ax_gate_info = plt.axes([0.68, 0.02, 0.3, 0.25])  # Increased width
         
-        # Range sliders - bottom left
-        self.ax_x_min = plt.axes([0.08, 0.25, 0.25, 0.03])
-        self.ax_x_max = plt.axes([0.08, 0.2, 0.25, 0.03])
-        self.ax_y_min = plt.axes([0.08, 0.15, 0.25, 0.03])
-        self.ax_y_max = plt.axes([0.08, 0.1, 0.25, 0.03])
+        # Range sliders - bottom left - scaled for larger window
+        self.ax_x_min = plt.axes([0.08, 0.25, 0.3, 0.04])  # Increased width and height
+        self.ax_x_max = plt.axes([0.08, 0.2, 0.3, 0.04])   # Increased width and height
+        self.ax_y_min = plt.axes([0.08, 0.15, 0.3, 0.04])  # Increased width and height
+        self.ax_y_max = plt.axes([0.08, 0.1, 0.3, 0.04])   # Increased width and height
         
-        # Gate control buttons - bottom right, only two buttons
-        button_width = 0.08
-        button_height = 0.04
-        button_spacing = 0.01
+        # Gate control buttons - bottom right, scaled up
+        button_width = 0.1    # Increased from 0.08
+        button_height = 0.05  # Increased from 0.04
+        button_spacing = 0.015  # Increased from 0.01
         start_x = 0.4
         button_y = 0.05
         
@@ -228,7 +236,7 @@ class InteractiveScatterPlot:
         self.ax_logic_gate = plt.axes([start_x + 2*(button_width + button_spacing), button_y, button_width, button_height])
         self.ax_clear_all = plt.axes([start_x + 3*(button_width + button_spacing), button_y, button_width, button_height])
         
-        # Create radio button controls - CHANGED: Use display names for channels
+        # Create radio button controls - Use display names for channels
         display_options = []
         for col in columns:
             if col in channels:
@@ -254,9 +262,9 @@ class InteractiveScatterPlot:
         prop_labels = ['0.1%', '1%', '10%', '100%']
         self.radio_prop = RadioButtons(self.ax_prop_dropdown, prop_labels)
         self.radio_prop.set_active(3)  # Default to 100%
-        # Make font smaller for radio buttons
+        # Make font appropriately sized for larger window
         for label in self.radio_prop.labels:
-            label.set_fontsize(7)
+            label.set_fontsize(9)  # Increased from 7
         
         # Create population dropdown
         self.update_population_dropdown()
@@ -271,7 +279,7 @@ class InteractiveScatterPlot:
         self.slider_y_max = Slider(self.ax_y_max, 'Y Max', 
                                 self.y_min, self.y_max, valinit=self.y_max)
         
-        # Gate buttons - reduced to 4 buttons
+        # Gate buttons
         self.button_gate = Button(self.ax_gate_btn, 'Draw Gate')
         self.button_save = Button(self.ax_save_gate, 'Save Gate')
         self.button_logic = Button(self.ax_logic_gate, 'Logic Gate')
@@ -303,14 +311,14 @@ class InteractiveScatterPlot:
         # Add window close event to reset naming mode
         self.fig.canvas.mpl_connect('close_event', self.on_main_window_close)
         
-        # Add compact labels
-        self.ax_x_dropdown.set_title('X Axis', fontsize=8, weight='bold')
-        self.ax_y_dropdown.set_title('Y Axis', fontsize=8, weight='bold')
-        self.ax_x_log_dropdown.set_title('X Scale', fontsize=8, weight='bold')
-        self.ax_y_log_dropdown.set_title('Y Scale', fontsize=8, weight='bold')
-        self.ax_prop_dropdown.set_title('Display', fontsize=8, weight='bold')
-        self.ax_pop_dropdown.set_title('Population', fontsize=8, weight='bold')
-        self.ax_gate_info.set_title('Gates', fontsize=9, weight='bold')
+        # Add appropriately sized labels for larger window
+        self.ax_x_dropdown.set_title('X Axis', fontsize=10, weight='bold')  # Increased from 8
+        self.ax_y_dropdown.set_title('Y Axis', fontsize=10, weight='bold')  # Increased from 8
+        self.ax_x_log_dropdown.set_title('X Scale', fontsize=10, weight='bold')  # Increased from 8
+        self.ax_y_log_dropdown.set_title('Y Scale', fontsize=10, weight='bold')  # Increased from 8
+        self.ax_prop_dropdown.set_title('Display', fontsize=10, weight='bold')  # Increased from 8
+        self.ax_pop_dropdown.set_title('Population', fontsize=10, weight='bold')  # Increased from 8
+        self.ax_gate_info.set_title('Gates', fontsize=11, weight='bold')  # Increased from 9
 
         self.update_gate_info_display()
         print("setup complete")
@@ -327,8 +335,8 @@ class InteractiveScatterPlot:
         # Create dropdown options
         population_options = ['All'] + sorted(list(all_gate_names))
         
-        # CHANGED: Increased limit since box is now taller
-        max_options = 15  # Increased from 8 to 15 options
+        # Increased limit for larger window
+        max_options = 20  # Increased from 15 for larger window
         if len(population_options) > max_options:
             # Keep 'All' and most recent gates
             population_options = population_options[:max_options-1] + ['...']
@@ -339,9 +347,9 @@ class InteractiveScatterPlot:
         # Create new radio buttons for population selection
         self.radio_population = RadioButtons(self.ax_pop_dropdown, population_options)
         
-        # Make font smaller for population radio buttons
+        # Make font appropriately sized for larger window
         for label in self.radio_population.labels:
-            label.set_fontsize(5)  # CHANGED: Even smaller font to fit more options
+            label.set_fontsize(7)  # Increased from 5 for better readability
         
         # Set active selection
         try:
@@ -354,8 +362,8 @@ class InteractiveScatterPlot:
         # Reconnect the event handler
         self.radio_population.on_clicked(self.on_population_change)
         
-        # Add title back
-        self.ax_pop_dropdown.set_title('Population', fontsize=9, weight='bold')
+        # Add title back with larger font
+        self.ax_pop_dropdown.set_title('Population', fontsize=11, weight='bold')  # Increased from 9
 
     def show_gate_edit_menu(self, gate_name):
         """Show gate edit menu"""
@@ -506,10 +514,10 @@ class InteractiveScatterPlot:
         # Get plot coordinates
         x_plot, y_plot = self.get_plot_data(plot_data)
         
-        # Create scatter plot
-        scatter = self.ax_main.scatter(x_plot, y_plot, alpha=0.6, s=1)
+        # Create scatter plot with slightly larger points for bigger window
+        scatter = self.ax_main.scatter(x_plot, y_plot, alpha=0.6, s=1.5)  # Increased from s=1
         
-        # Set labels - CHANGED: Use channel names for display when applicable
+        # Set labels - Use channel names for display when applicable
         if self.x_channel in channels:
             x_channel_index = channels.index(self.x_channel)
             x_channel_name = channel_names[x_channel_index]
@@ -525,14 +533,15 @@ class InteractiveScatterPlot:
         x_label = f'log10({x_channel_name})' if self.x_log else x_channel_name
         y_label = f'log10({y_channel_name})' if self.y_log else y_channel_name
         
-        self.ax_main.set_xlabel(x_label, fontsize=12)
-        self.ax_main.set_ylabel(y_label, fontsize=12)
+        # Increase font sizes for larger window
+        self.ax_main.set_xlabel(x_label, fontsize=14)  # Increased from 12
+        self.ax_main.set_ylabel(y_label, fontsize=14)  # Increased from 12
         
         # Display current population above the plot
         pop_display = f"Population: {self.input_population}"
         plot_title = f'{y_label} vs {x_label}\n{pop_display}\nShowing {len(plot_data):,} points ({self.display_prop*100:.1f}%)'
         
-        self.ax_main.set_title(plot_title, fontsize=11, weight='bold')
+        self.ax_main.set_title(plot_title, fontsize=13, weight='bold')  # Increased from 11
         
         # Set ranges
         self.ax_main.set_xlim(self.slider_x_min.val, self.slider_x_max.val)
@@ -544,7 +553,7 @@ class InteractiveScatterPlot:
         # Draw existing gates
         self.draw_gates()
         
-        # Add point count info
+        # Add point count info with larger font
         visible_x = (x_plot >= self.slider_x_min.val) & (x_plot <= self.slider_x_max.val)
         visible_y = (y_plot >= self.slider_y_min.val) & (y_plot <= self.slider_y_max.val)
         visible_count = np.sum(visible_x & visible_y)
@@ -552,6 +561,7 @@ class InteractiveScatterPlot:
         self.ax_main.text(0.02, 0.98, f'Visible: {visible_count:,}', 
                         transform=self.ax_main.transAxes, 
                         verticalalignment='top',
+                        fontsize=11,  # Increased from default
                         bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
         
         # Update gate info display
@@ -895,41 +905,51 @@ class InteractiveScatterPlot:
             pass
 
     def create_logical_gate(self, gate_name, logic_expr):
-        print("Creating logical gate")
-        """Create a gate based on logical expression"""
+        """Create a gate based on logical expression using saved indices"""
+        print(f"Creating logical gate: {gate_name} = {logic_expr}")
+        
         try:
-            # Test the logic expression with current data
-            test_mask = self.evaluate_logic_expression_for_data(logic_expr, self.df)
+            # Get current population context (if any parent gate is selected)
+            current_population_indices = None
+            if self.input_population != "All":
+                current_pop_data = self.get_current_population_data()
+                current_population_indices = current_pop_data.index.tolist()
             
-            if test_mask is not None:
-                print("Storing logic gate")
-                # Store logical gate in "All" key so it's accessible from any channel combination
-                key = "All"  # Use a universal key for logic gates
+            # Evaluate expression using saved indices
+            result_indices = self.evaluate_logic_expression_with_saved_indices(
+                logic_expr, current_population_indices
+            )
+            
+            if result_indices:
+                # Convert to list for saving
+                result_list = list(result_indices)
+                
+                # Store the gate metadata
+                key = "All"  # Logic gates are universal
                 if key not in self.gates:
                     self.gates[key] = {}
                 
                 self.gates[key][gate_name] = {
                     'type': 'logic',
                     'expression': logic_expr,
-                    'x_axis': None,  # Logic gates aren't tied to specific channels
-                    'y_axis': None,
+                    'x_channel': None,
+                    'y_channel': None,
                     'x_log': None,
                     'y_log': None,
+                    'parent_population': self.input_population,  # Store parent context
                     'created': datetime.now().isoformat()
                 }
                 
-                # CHANGED: Increment gate counter for logic gates too
+                # Save the gate indices - FIXED: Create mask from indices
+                mask = np.zeros(len(self.df), dtype=bool)
+                mask[result_list] = True
+                self.save_gate_cells(gate_name, mask)
+                
+                # Update counter and save
                 self.gate_counter += 1
-                
                 self.save_gates()
-                self.save_gate_cells(gate_name, test_mask)
                 
-                points_inside = np.sum(test_mask)
-                total_points = len(test_mask)
-                percentage = 100 * points_inside / total_points if total_points > 0 else 0
-                
-                print(f"Logic gate '{gate_name}' created: {logic_expr}")
-                print(f"Points inside gate: {points_inside} / {total_points} ({percentage:.2f}%)")
+                print(f"Logic gate '{gate_name}' created with {len(result_list)} cells")
                 
                 # Update displays
                 self.update_population_dropdown()
@@ -937,10 +957,12 @@ class InteractiveScatterPlot:
                 self.update_plot()
                 
             else:
-                print("Failed to create logic gate - invalid expression")
+                print("No cells found for logic expression")
                 
         except Exception as e:
             print(f"Error creating logic gate: {e}")
+            import traceback
+            traceback.print_exc()
     
     def evaluate_logic_expression_for_data(self, expr, data):
         """Evaluate logical expression for specific data"""
@@ -977,7 +999,102 @@ class InteractiveScatterPlot:
             return np.zeros(len(data), dtype=bool)
             print(f"Error evaluating expression: {e}")
             return None
-    
+
+    def load_gate_indices(self, gate_name):
+        """Load cell indices from saved gate file"""
+        try:
+            gate_file = os.path.join(self.save_dir, f"gate_{gate_name}.json")
+            if os.path.exists(gate_file):
+                with open(gate_file, 'r') as f:
+                    gate_data = json.load(f)
+                    return gate_data.get('cell_indices', [])
+            else:
+                print(f"Gate file not found: {gate_file}")
+                return []
+        except Exception as e:
+            print(f"Error loading gate indices for {gate_name}: {e}")
+            return []
+
+    def get_gate_mask_from_indices(self, gate_name, data_length):
+        """Convert saved indices back to a boolean mask"""
+        indices = self.load_gate_indices(gate_name)
+        mask = np.zeros(data_length, dtype=bool)
+        if indices:
+            # Make sure indices are within bounds
+            valid_indices = [i for i in indices if 0 <= i < data_length]
+            mask[valid_indices] = True
+        return mask
+
+    def evaluate_logic_expression_with_saved_indices(self, expr, current_population_indices=None):
+        """Evaluate logical expression using saved cell indices"""
+        print(f"Evaluating logic expression with saved indices: {expr}")
+        
+        # Get current population context
+        if current_population_indices is None:
+            current_population_indices = set(range(len(self.df)))
+        else:
+            current_population_indices = set(current_population_indices)
+        
+        # Parse expression and get gate indices
+        tokens = expr.replace('(', ' ( ').replace(')', ' ) ').split()
+        
+        gate_index_sets = {}
+        for token in tokens:
+            if token not in ['AND', 'OR', 'NOT', '(', ')']:
+                # Load saved indices for this gate
+                saved_indices = self.load_gate_indices(token)
+                if saved_indices:
+                    # Convert to set and intersect with current population
+                    gate_index_sets[token] = set(saved_indices) & current_population_indices
+                    print(f"Gate '{token}': {len(gate_index_sets[token])} cells in current population")
+                else:
+                    print(f"No saved indices found for gate '{token}'")
+                    return set()
+        
+        # Evaluate using set operations
+        return self.evaluate_set_logic(expr, gate_index_sets)
+
+    def evaluate_set_logic(self, expr, gate_sets):
+        """Evaluate logical expression using set operations"""
+        # Simple parser for basic expressions
+        tokens = expr.strip().split()
+        
+        if len(tokens) == 3:
+            gate1, op, gate2 = tokens
+            set1 = gate_sets.get(gate1, set())
+            set2 = gate_sets.get(gate2, set())
+            
+            if op == 'AND':
+                return set1 & set2
+            elif op == 'OR':
+                return set1 | set2
+            elif op == 'AND' and tokens[2] == 'NOT':  # Handle "AND NOT"
+                return set1 - set2
+        
+        elif len(tokens) == 2 and tokens[0] == 'NOT':
+            gate = tokens[1]
+            gate_set = gate_sets.get(gate, set())
+            # NOT relative to current population
+            current_pop = set(range(len(self.df)))  # You might want to pass this in
+            return current_pop - gate_set
+        
+        # Handle "GATE1 AND NOT GATE2" format
+        elif len(tokens) == 4 and tokens[1] == 'AND' and tokens[2] == 'NOT':
+            gate1, _, _, gate2 = tokens
+            set1 = gate_sets.get(gate1, set())
+            set2 = gate_sets.get(gate2, set())
+            return set1 - set2
+        
+        # Handle "GATE1 OR NOT GATE2" format  
+        elif len(tokens) == 4 and tokens[1] == 'OR' and tokens[2] == 'NOT':
+            gate1, _, _, gate2 = tokens
+            set1 = gate_sets.get(gate1, set())
+            set2 = gate_sets.get(gate2, set())
+            current_pop = set(range(len(self.df)))
+            return set1 | (current_pop - set2)
+        
+        return set()  
+
     def get_gate_mask_for_data(self, gate_name, data):
         print("Getting gate mask for data")
         """Get mask for a specific gate applied to given data"""
@@ -1025,9 +1142,22 @@ class InteractiveScatterPlot:
         return np.zeros(len(data), dtype=bool)
     
     def calculate_gate_mask(self, gate_info, key):
-        print( "Calculating gate mask")
-        """Calculate mask for a gate"""
+        print("Calculating gate mask")
+        """Calculate mask for a gate - FIXED: Respects parent population"""
         if gate_info['type'] == 'polygon':
+            # CHANGED: Get parent population first if gate has one
+            parent_population = gate_info.get('parent_population', 'All')
+            
+            if parent_population != 'All':
+                # Get parent population mask first
+                parent_mask = self.get_population_mask(parent_population)
+                if parent_mask is None:
+                    print(f"Warning: Parent population '{parent_population}' not found")
+                    parent_mask = np.ones(len(self.df), dtype=bool)
+            else:
+                parent_mask = np.ones(len(self.df), dtype=bool)
+            
+            # Get data for the channels this gate uses
             x_data = self.df[gate_info['x_channel']]
             y_data = self.df[gate_info['y_channel']]
             
@@ -1047,32 +1177,88 @@ class InteractiveScatterPlot:
             
             path = Path(test_vertices)
             points = np.column_stack([x_data, y_data])
-            return path.contains_points(points)
+            
+            # Calculate which points are inside the polygon
+            polygon_mask = path.contains_points(points)
+            
+            # CHANGED: Combine with parent population mask - only points that are BOTH 
+            # in parent population AND inside polygon
+            final_mask = parent_mask & polygon_mask
+            
+            return final_mask
         
         return np.zeros(len(self.df), dtype=bool)
-    
-    def calculate_and_save_gate_stats(self, gate_name, key):
-        print("Calculating and saving gate stats")
-        """Calculate statistics and save cells for a gate"""
+
+    def get_population_mask(self, population_name):
+        """Get mask for a specific population by name"""
+        print(f"Getting population mask for: {population_name}")
+        
+        if population_name == 'All':
+            return np.ones(len(self.df), dtype=bool)
+        
+        # Search for the population in all gate combinations
+        for key, gates_dict in self.gates.items():
+            if population_name in gates_dict:
+                gate_info = gates_dict[population_name]
+                
+                if gate_info['type'] == 'logic':
+                    return self.evaluate_logic_expression_for_data(gate_info['expression'], self.df)
+                else:
+                    # For polygon gates, calculate recursively to handle nested parents
+                    return self.calculate_gate_mask(gate_info, key)
+        
+        print(f"Population '{population_name}' not found")
+        return None
+
+    def calculate_and_save_gate_stats(self, gate_name, key, parent_data):
+        """Calculate statistics and save cells for a gate within parent population"""
+        print("Calculating and saving gate stats with parent population")
         gate_info = self.gates[key][gate_name]
-        mask = self.calculate_gate_mask(gate_info, key)
+        
+        # CHANGED: Calculate mask only for parent population data
+        x_data = parent_data[gate_info['x_channel']]
+        y_data = parent_data[gate_info['y_channel']]
+        
+        if gate_info['x_log']:
+            x_data = np.log10(x_data + self.epsilon)
+        if gate_info['y_log']:
+            y_data = np.log10(y_data + self.epsilon)
+        
+        # Create path from vertices and test only parent population points
+        from matplotlib.path import Path
+        path = Path(gate_info['vertices'] if not (gate_info['x_log'] or gate_info['y_log']) else 
+                    [[np.log10(x + self.epsilon) if gate_info['x_log'] else x,
+                    np.log10(y + self.epsilon) if gate_info['y_log'] else y] 
+                    for x, y in gate_info['vertices']])
+        
+        points = np.column_stack([x_data, y_data])
+        parent_mask = path.contains_points(points)
+        
+        # CHANGED: Create full dataset mask by mapping parent indices back to full dataset
+        full_mask = np.zeros(len(self.df), dtype=bool)
+        parent_indices = parent_data.index
+        full_mask[parent_indices[parent_mask]] = True
         
         # Save gate cell information
-        self.save_gate_cells(gate_name, mask)
+        self.save_gate_cells(gate_name, full_mask)
         
         # Print statistics
-        points_inside = np.sum(mask)
-        total_points = len(mask)
-        percentage = 100 * points_inside / total_points if total_points > 0 else 0
+        points_inside = np.sum(parent_mask)  # Count within parent population
+        parent_total = len(parent_data)
+        total_points = len(self.df)
+        parent_percentage = 100 * points_inside / parent_total if parent_total > 0 else 0
+        total_percentage = 100 * np.sum(full_mask) / total_points if total_points > 0 else 0
         
         print(f"\nGate '{gate_name}' statistics:")
-        print(f"Points inside gate: {points_inside} / {total_points} ({percentage:.2f}%)")
+        print(f"Parent population: {gate_info['parent_population']} ({parent_total:,} points)")
+        print(f"Points inside gate: {points_inside:,} / {parent_total:,} ({parent_percentage:.2f}% of parent)")
+        print(f"Total dataset coverage: {np.sum(full_mask):,} / {total_points:,} ({total_percentage:.2f}% of all)")
         
         if gate_info['type'] == 'polygon':
             print("Coordinates (original scale):")
             for i, (x, y) in enumerate(gate_info['vertices']):
                 print(f"  Point {i+1}: ({x:.3f}, {y:.3f})")
-    
+                
     def save_gate_cells(self, gate_name, mask):
         print("Saving gate cells")
         """Save cell indices that fall within a gate"""
@@ -1085,7 +1271,7 @@ class InteractiveScatterPlot:
             'timestamp': datetime.now().isoformat()
         }
         
-        filename = os.path.join(self.save_dir, f"cells_{gate_name}.json")
+        filename = os.path.join(self.save_dir, f"gate_{gate_name}.json")
         with open(filename, 'w') as f:
             json.dump(cell_data, f, indent=2)
         
@@ -1100,11 +1286,12 @@ class InteractiveScatterPlot:
         print(f"Gates saved to {filename}")
     
     def complete_gate_save(self, gate_name):
-        """Complete the gate saving process with the given name"""
+        """Complete the gate saving process with the given name - FIXED: Only use points from parent population"""
         print(f"Starting complete_gate_save for: {gate_name}")
         print(f"Current vertices: {self.current_vertices}")
         print(f"X channel: {self.x_channel}, Y channel: {self.y_channel}")
         print(f"X log: {self.x_log}, Y log: {self.y_log}")
+        print(f"Parent population: {self.input_population}")
         
         # Handle spaces in gate names by replacing with underscores
         gate_name = gate_name.replace(' ', '_')
@@ -1115,6 +1302,10 @@ class InteractiveScatterPlot:
         if not self.current_vertices:
             print("ERROR: No vertices to save!")
             return
+        
+        # CHANGED: Get parent population data first
+        parent_data = self.get_current_population_data()
+        print(f"Parent population has {len(parent_data)} points")
         
         # CHANGED: Add error handling for coordinate transformation
         original_vertices = []
@@ -1159,7 +1350,7 @@ class InteractiveScatterPlot:
             print(f"ERROR in coordinate conversion: {e}")
             return
         
-        # Store the gate
+        # CHANGED: Store the gate with parent population information
         key = self.get_channel_key()
         if key not in self.gates:
             self.gates[key] = {}
@@ -1172,14 +1363,15 @@ class InteractiveScatterPlot:
                 'y_channel': self.y_channel,
                 'x_log': self.x_log,
                 'y_log': self.y_log,
+                'parent_population': self.input_population,  # CHANGED: Store parent population
                 'created': datetime.now().isoformat()
             }
             
-            print(f"Gate stored successfully: {gate_name}")
+            print(f"Gate stored successfully: {gate_name} with parent: {self.input_population}")
             
-            # Save gates and calculate statistics
+            # CHANGED: Calculate mask only within parent population for statistics
             self.save_gates()
-            self.calculate_and_save_gate_stats(gate_name, key)
+            self.calculate_and_save_gate_stats(gate_name, key, parent_data)
             
             # Update population dropdown
             self.update_population_dropdown()
@@ -1234,88 +1426,103 @@ class InteractiveScatterPlot:
             print("No existing gates file found")
     
     def update_gate_info_display(self):
-        """Update the gate information display panel - simplified version"""
+        """Update the gate information display panel - FIXED: Use saved indices for statistics"""
         print("Updating gate info display")
         self.ax_gate_info.clear()
-        self.ax_gate_info.set_title('Gates', fontsize=9, weight='bold')
+        self.ax_gate_info.set_title('Gates', fontsize=11, weight='bold')
         
         # Get all gates
         all_gates_info = []
         for key, gates_dict in self.gates.items():
             for gate_name, gate_info in gates_dict.items():
-                # Calculate statistics for this gate
+                # FIXED: Use saved indices for statistics when available
                 try:
-                    if gate_info['type'] == 'logic':
-                        mask = self.evaluate_logic_expression_for_data(gate_info['expression'], self.df)
-                    else:
-                        mask = self.calculate_gate_mask(gate_info, key)
-                    
-                    if mask is not None:
-                        points_inside = np.sum(mask)
+                    saved_indices = self.load_gate_indices(gate_name)
+                    if saved_indices:
+                        points_inside = len(saved_indices)
                         total_points = len(self.df)
                         percentage = 100 * points_inside / total_points if total_points > 0 else 0
-                        
-                        all_gates_info.append({
-                            'name': gate_name,
-                            'type': gate_info['type'],
-                            'points': points_inside,
-                            'percentage': percentage,
-                            'key': key,
-                            'gate_info': gate_info
-                        })
+                        print(f"Using saved indices for {gate_name}: {points_inside} points")
                     else:
-                        print(f"Failed to calculate mask for gate {gate_name}")
+                        # Fallback to calculation
+                        print(f"No saved indices for {gate_name}, calculating mask")
+                        if gate_info['type'] == 'logic':
+                            mask = self.evaluate_logic_expression_for_data(gate_info['expression'], self.df)
+                        else:
+                            mask = self.calculate_gate_mask(gate_info, key)
+                        
+                        if mask is not None:
+                            points_inside = np.sum(mask)
+                            total_points = len(self.df)
+                            percentage = 100 * points_inside / total_points if total_points > 0 else 0
+                        else:
+                            print(f"Failed to calculate mask for gate {gate_name}")
+                            continue
+                    
+                    parent_pop = gate_info.get('parent_population', 'All')
+                    
+                    all_gates_info.append({
+                        'name': gate_name,
+                        'type': gate_info['type'],
+                        'points': points_inside,
+                        'percentage': percentage,
+                        'parent': parent_pop,
+                        'key': key,
+                        'gate_info': gate_info
+                    })
+                    
                 except Exception as e:
                     print(f"Error calculating stats for gate {gate_name}: {e}")
                     continue
         
         if not all_gates_info:
             self.ax_gate_info.text(0.5, 0.5, 'No gates created yet', ha='center', va='center', 
-                                transform=self.ax_gate_info.transAxes, fontsize=10)
+                                transform=self.ax_gate_info.transAxes, fontsize=12)
             self.ax_gate_info.set_xlim(0, 1)
             self.ax_gate_info.set_ylim(0, 1)
             self.ax_gate_info.axis('off')
             return
         
-        # CHANGED: Squeezed spacing for more gates
+        # Display gates
         y_pos = 0.98
-        row_height = 0.08  # Reduced from 0.1 to squeeze more gates
+        row_height = 0.07
         
         for i, gate_info in enumerate(all_gates_info):
             if y_pos < 0.05:
                 # Add "..." if there are more gates
                 self.ax_gate_info.text(0.5, y_pos, f'... and {len(all_gates_info) - i} more gates', 
-                                    ha='center', va='top', fontsize=7, style='italic',
+                                    ha='center', va='top', fontsize=8, style='italic',
                                     transform=self.ax_gate_info.transAxes)
                 break
             
-            # Gate name
+            # Gate name with parent info
             display_name = gate_info['name']
+            parent_info = f" ({gate_info['parent']})" if gate_info['parent'] != 'All' else ""
             color = 'lightblue' if gate_info['type'] == 'polygon' else 'lightgreen'
             
-            # Gate name (smaller box to make room for buttons)
-            self.ax_gate_info.text(0.02, y_pos, display_name, 
-                                ha='left', va='top', fontsize=7, weight='bold',  # CHANGED: Smaller font
-                                bbox=dict(boxstyle='round,pad=0.1', facecolor=color, alpha=0.8),  # CHANGED: Less padding
+            # Gate name and parent info
+            self.ax_gate_info.text(0.02, y_pos, display_name + parent_info, 
+                                ha='left', va='top', fontsize=8, weight='bold',
+                                bbox=dict(boxstyle='round,pad=0.2', facecolor=color, alpha=0.8),
                                 transform=self.ax_gate_info.transAxes)
             
-            # Buttons on same line, properly spaced and smaller
+            # Buttons on same line
             button_y = y_pos
-            self.ax_gate_info.text(0.42, button_y, 'Data', 
-                                ha='center', va='top', fontsize=5, color='green', weight='bold',  # CHANGED: Smaller font
-                                bbox=dict(boxstyle='round,pad=0.05', facecolor='white', alpha=0.8),  # CHANGED: Less padding
+            self.ax_gate_info.text(0.55, button_y, 'Data', 
+                                ha='center', va='top', fontsize=6, color='green', weight='bold',
+                                bbox=dict(boxstyle='round,pad=0.1', facecolor='white', alpha=0.8),
                                 transform=self.ax_gate_info.transAxes,
                                 picker=True, gid=f"data_{gate_info['name']}")
             
-            self.ax_gate_info.text(0.62, button_y, 'Edit', 
-                                ha='center', va='top', fontsize=5, color='blue', weight='bold',  # CHANGED: Smaller font
-                                bbox=dict(boxstyle='round,pad=0.05', facecolor='white', alpha=0.8),  # CHANGED: Less padding
+            self.ax_gate_info.text(0.7, button_y, 'Edit', 
+                                ha='center', va='top', fontsize=6, color='blue', weight='bold',
+                                bbox=dict(boxstyle='round,pad=0.1', facecolor='white', alpha=0.8),
                                 transform=self.ax_gate_info.transAxes,
                                 picker=True, gid=f"edit_{gate_info['name']}")
             
-            self.ax_gate_info.text(0.82, button_y, 'Del', 
-                                ha='center', va='top', fontsize=5, color='red', weight='bold',  # CHANGED: Smaller font
-                                bbox=dict(boxstyle='round,pad=0.05', facecolor='white', alpha=0.8),  # CHANGED: Less padding
+            self.ax_gate_info.text(0.85, button_y, 'Del', 
+                                ha='center', va='top', fontsize=6, color='red', weight='bold',
+                                bbox=dict(boxstyle='round,pad=0.1', facecolor='white', alpha=0.8),
                                 transform=self.ax_gate_info.transAxes,
                                 picker=True, gid=f"delete_{gate_info['name']}")
             
@@ -1474,7 +1681,7 @@ class InteractiveScatterPlot:
         return self.gates.copy()
 
     def show_gate_data(self, gate_name):
-        """Show gate data analysis window"""
+        """Show gate data analysis window - FIXED: Use saved indices"""
         if self.naming_mode:
             return
         
@@ -1494,31 +1701,38 @@ class InteractiveScatterPlot:
             self.naming_mode = False
             return
         
-        # Calculate gate mask
+        # FIXED: Use saved indices first
         try:
-            if gate_info['type'] == 'logic':
-                mask = self.evaluate_logic_expression_for_data(gate_info['expression'], self.df)
+            saved_indices = self.load_gate_indices(gate_name)
+            if saved_indices:
+                gate_data = self.df.iloc[saved_indices]
+                points_inside = len(saved_indices)
+                print(f"Using saved indices for {gate_name}: {points_inside} points")
             else:
-                mask = self.calculate_gate_mask(gate_info, gate_key)
-            
-            if mask is None:
-                print(f"Failed to calculate mask for gate '{gate_name}'")
-                self.naming_mode = False
-                return
-            
-            # Get data for cells in this gate
-            gate_data = self.df[mask]
+                # Fallback to calculation
+                print(f"No saved indices for {gate_name}, calculating mask")
+                if gate_info['type'] == 'logic':
+                    mask = self.evaluate_logic_expression_for_data(gate_info['expression'], self.df)
+                else:
+                    mask = self.calculate_gate_mask(gate_info, gate_key)
+                
+                if mask is None:
+                    print(f"Failed to calculate mask for gate '{gate_name}'")
+                    self.naming_mode = False
+                    return
+                
+                gate_data = self.df[mask]
+                points_inside = np.sum(mask)
             
         except Exception as e:
-            print(f"Error calculating gate data: {e}")
+            print(f"Error getting gate data: {e}")
             self.naming_mode = False
             return
         
-        # FIXED: Create data display window with proper TkAgg handling
+        # Create data display window
         self.gate_data_figure = plt.figure(figsize=(10, 6))
         self.gate_data_figure.suptitle(f'Data Analysis: {gate_name}', fontsize=14, weight='bold')
         
-        # FIXED: Store reference to prevent garbage collection
         self.data_dialog_widgets = {}
         
         def on_data_close(event):
@@ -1530,7 +1744,6 @@ class InteractiveScatterPlot:
         ax_data.axis('off')
         
         # Calculate statistics
-        points_inside = np.sum(mask)
         total_points = len(self.df)
         percentage = 100 * points_inside / total_points if total_points > 0 else 0
         
@@ -1593,12 +1806,12 @@ class InteractiveScatterPlot:
         
         self.data_dialog_widgets['button_close'].on_clicked(on_close_data)
         
-        # FIXED: Force the dialog to be interactive
+        # Show the dialog
         plt.show(block=False)
         self.gate_data_figure.canvas.draw()
         self.gate_data_figure.canvas.flush_events()
         
-        # FIXED: Bring window to front
+        # Bring window to front
         try:
             self.gate_data_figure.canvas.manager.window.wm_attributes('-topmost', 1)
             self.gate_data_figure.canvas.manager.window.wm_attributes('-topmost', 0)

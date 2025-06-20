@@ -23,3 +23,46 @@ rename to segmentation channel
 use correct parameters
 
 processing bar should be channel dependent, or do all processes per channel
+general loading bar fix
+
+
+
+
+Still before shrews:
+1. Characterise cells - DONE
+2. Analyse this data using my separate script
+3. optimise iou threshold
+4. Then run my other images.
+5. Plot.
+output of scatter plot?
+
+By today - set up processing and segmentation for overnight.
+
+
+I did not ask you to remove the option of the other columns for the x and y axis, I still want to be able to have z_position, pixel_count, cell_number. Bring it back. Only write out the functions you are changing in this prompt!
+
+
+Bra+ Sox1+ Sox2+ NMP
+Bra+ Sox1- Sox2+ NMP
+Bra- Sox1+ Sox2- Neural
+Bra- Sox1+ Sox2+ Neural
+Bra+ Sox1- Sox2- Mesoderm
+
+Bra+ Sox1+ Sox2- Uncharacterised
+Bra- Sox1- Sox2+ Pluripotent
+Bra- Sox1- Sox2- Uncharacterised
+
+Bra+ Sox2+ NMP
+Sox2-
+Bra- Sox1+ Neural
+Bra+ AND NOT NMP Mesoderm
+
+Uncharacterised options:
+Sox2- AND NOT Mesoderm AND NOT Neural
+
+Mesoderm OR Neural = 
+
+Pluripotent:
+Sox2+ AND NOT NMP AND NOT NEURAL
+
+Requires a NOT before the first gate too.
