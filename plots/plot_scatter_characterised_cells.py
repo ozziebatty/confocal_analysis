@@ -22,13 +22,27 @@ matplotlib.use('TkAgg')  # or 'Qt5Agg'
 
 #%%
 # Load data
-print("Loading data")
+replicate_number = 1
+replicate_string = f"replicate_{replicate_number}"  # or "replicate_" + str(replicate_number)
+print("Loading data for replicate_", replicate_number)
+
+project_path = os.path.normpath(r"Y:\Room225_SharedFolder\Leica_Stellaris5_data\Gastruloids\oskar\analysis\SBSO_OPP_NM_two_analysis")
+channel_details_path = os.path.join(project_path, 'channel_details.csv')
+replicate_path = os.path.join(project_path, replicate_string)
+characterised_cells_path = os.path.join(replicate_path, f"{replicate_string}_characterised_cells.csv")
+
 file_path = os.path.normpath(r"Y:\Room225_SharedFolder\Leica_Stellaris5_data\Gastruloids\oskar\analysis\SBSO_OPP_NM_two_analysis\replicate_2\replicate_2_characterised_cells.csv")
 gates_directory = os.path.normpath(r"Y:\Room225_SharedFolder\Leica_Stellaris5_data\Gastruloids\oskar\analysis\SBSO_OPP_NM_two_analysis\replicate_2")
 df = pd.read_csv(file_path)
 
 columns = ['cell_number','pixel_count','z_position','channel_0','channel_1','channel_2','channel_3','channel_4']
 channels = ['channel_0', 'channel_1', 'channel_2', 'channel_3', 'channel_4']
+
+# Load channel names as a list
+channel_df = pd.read_csv(channel_details_path)
+channel_names = channel_df['channel'].tolist()
+
+print("Channel names:", channel_names)
 
 #%%
 class InteractiveScatterPlot:
@@ -180,7 +194,7 @@ class InteractiveScatterPlot:
         # Main scatter plot - larger
         self.ax_main = plt.axes([0.08, 0.35, 0.55, 0.6])
         
-       # Control panel layout - top right - CHANGED: Extended axis boxes down even more, shifted everything down
+    # Control panel layout - top right - CHANGED: Extended axis boxes down even more, shifted everything down
         # Channel selection dropdowns - CHANGED: Extended downward by extra 50%
         self.ax_x_dropdown = plt.axes([0.68, 0.68, 0.12, 0.225])  # Extended from 0.15 to 0.225 height (50% more)
         self.ax_y_dropdown = plt.axes([0.82, 0.68, 0.12, 0.225])  # Extended from 0.15 to 0.225 height (50% more)
@@ -214,9 +228,19 @@ class InteractiveScatterPlot:
         self.ax_logic_gate = plt.axes([start_x + 2*(button_width + button_spacing), button_y, button_width, button_height])
         self.ax_clear_all = plt.axes([start_x + 3*(button_width + button_spacing), button_y, button_width, button_height])
         
-        # Create radio button controls
-        self.radio_x = RadioButtons(self.ax_x_dropdown, columns)
-        self.radio_y = RadioButtons(self.ax_y_dropdown, columns)
+        # Create radio button controls - CHANGED: Use display names for channels
+        display_options = []
+        for col in columns:
+            if col in channels:
+                # Replace channel column names with actual channel names
+                channel_index = channels.index(col)
+                display_options.append(channel_names[channel_index])
+            else:
+                # Keep non-channel columns as is
+                display_options.append(col)
+        
+        self.radio_x = RadioButtons(self.ax_x_dropdown, display_options)
+        self.radio_y = RadioButtons(self.ax_y_dropdown, display_options)
         self.radio_x.set_active(columns.index(self.x_channel))
         self.radio_y.set_active(columns.index(self.y_channel))
         
@@ -485,9 +509,21 @@ class InteractiveScatterPlot:
         # Create scatter plot
         scatter = self.ax_main.scatter(x_plot, y_plot, alpha=0.6, s=1)
         
-        # Set labels
-        x_label = f'log10({self.x_channel})' if self.x_log else self.x_channel
-        y_label = f'log10({self.y_channel})' if self.y_log else self.y_channel
+        # Set labels - CHANGED: Use channel names for display when applicable
+        if self.x_channel in channels:
+            x_channel_index = channels.index(self.x_channel)
+            x_channel_name = channel_names[x_channel_index]
+        else:
+            x_channel_name = self.x_channel
+            
+        if self.y_channel in channels:
+            y_channel_index = channels.index(self.y_channel)
+            y_channel_name = channel_names[y_channel_index]
+        else:
+            y_channel_name = self.y_channel
+        
+        x_label = f'log10({x_channel_name})' if self.x_log else x_channel_name
+        y_label = f'log10({y_channel_name})' if self.y_log else y_channel_name
         
         self.ax_main.set_xlabel(x_label, fontsize=12)
         self.ax_main.set_ylabel(y_label, fontsize=12)
@@ -1333,18 +1369,32 @@ class InteractiveScatterPlot:
     
     def on_x_channel_change(self, label):
         print("Changing X channel")
-        self.x_channel = label
+        # Convert display name back to column name
+        if label in channel_names:
+            # This is a channel name, convert to column name
+            channel_index = channel_names.index(label)
+            self.x_channel = channels[channel_index]
+        else:
+            # This is already a column name (like z_position, pixel_count, etc.)
+            self.x_channel = label
         self.update_ranges()
         self.update_sliders()
         self.update_plot()
-    
+
     def on_y_channel_change(self, label):
         print("Changing Y channel")
-        self.y_channel = label
+        # Convert display name back to column name
+        if label in channel_names:
+            # This is a channel name, convert to column name
+            channel_index = channel_names.index(label)
+            self.y_channel = channels[channel_index]
+        else:
+            # This is already a column name (like z_position, pixel_count, etc.)
+            self.y_channel = label
         self.update_ranges()
         self.update_sliders()
         self.update_plot()
-    
+
     def on_prop_change(self, label):
         print("Changing display proportion")
         prop_map = {'0.1%': 0.001, '1%': 0.01, '10%': 0.1, '100%': 1.0}
