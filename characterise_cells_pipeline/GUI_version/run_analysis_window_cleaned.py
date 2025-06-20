@@ -5,7 +5,7 @@ import pandas as pd
 import tkinter as tk
 from tkinter import messagebox, ttk
 from datetime import datetime
-from skimage import img_as_ubyte
+from skimage import img_as_ubyte, img_as_float
 from skimage.exposure import equalize_adapthist
 from skimage.filters import gaussian
 import tifffile
@@ -225,50 +225,102 @@ def initialise_window():
 
     return processes
 
-def load_project_data(project_root, processes):
+def load_project_data(project_path, processes):
     # Check if segmentation is selected from processes.csv
-    processes_path = os.path.join(project_root, 'processes.csv')
+    processes_path = os.path.join(project_path, 'processes.csv')
     if os.path.exists(processes_path):
         processes_df = pd.read_csv(processes_path)
-        segmentation_row = processes_df[processes_df['Process'] == 'Cellpose nuclear segmentation']
-        segmentation_selected = len(segmentation_row) > 0 and segmentation_row['Selected'].values[0] == 'Yes'
+        segmentation_row = processes_df[processes_df['process'] == 'cellpose_nuclear_segmentation']
+        segmentation_selected = len(segmentation_row) > 0 and segmentation_row['selected'].values[0] == 'yes'
     else:
         segmentation_selected = True  # Default to True if file doesn't exist
 
+            
+    # Define available processes (instead of loading from file)
+    available_processes = ['CLAHE', 'Gaussian']
+
     # Load parameters from parameters_updated.csv
-    parameters_path = os.path.join(project_root, 'parameters_updated.csv')
+    parameters_path = os.path.join(project_path, 'parameters.csv')
     if os.path.exists(parameters_path):
         parameters_df = pd.read_csv(parameters_path)
         
-        # Extract parameters with correct data type
-        parameters = {}
-        for _, row in parameters_df.iterrows():
-            parameter_name = row['Parameter']
-            parameter_value = row['Value']
-            data_type = row['Data type']
-            
-            if data_type == 'Float':
-                parameters[parameter_name] = float(parameter_value)
-            elif data_type == 'Integer':
-                parameters[parameter_name] = int(parameter_value)
-            else:
-                parameters[parameter_name] = parameter_value
-
-    # Determine nuclear channel from channel_details.csv
-    channel_path = os.path.join(project_root, 'channel_details.csv')
-    nuclear_channel_index = 0  # Default to first channel
-
-    if os.path.exists(channel_path):
-        channel_df = pd.read_csv(channel_path)
-        nuclear_rows = channel_df[channel_df['Nuclear Channel'] == 'Yes']
+        print(parameters_df)
+        # Load parameters file
+        try:
+            required_columns = ['parameter', 'process', 'channel', 'value', 'default_value', 'data_type', 'must_be_odd']
+            if not all(col in parameters_df.columns for col in required_columns):
+                raise ValueError(f"Parameters CSV must contain columns: {required_columns}")
+        except Exception as e:
+            raise ValueError(f"Error loading parameters CSV file: {str(e)}")
         
-        if len(nuclear_rows) > 0:
-            # Get the index from the row index (B2 -> index 0, B6 -> index 4)
-            # Assuming B2, B3, B4, etc. correspond to rows 1, 2, 3, etc.
-            nuclear_channel_index = nuclear_rows.index[0]
+        channel_parameters = {}
+        global_parameters = {}
+        # Dictionary to store process selection state
+        process_enabled = {process: False for process in available_processes}
+        
+        # Initialize parameter values from the CSV
+        for _, row in parameters_df.iterrows():
+            parameter_name = row['parameter']
+            channel = row['channel']
+            value = row['value']
+            default_value = row['default_value']
+            
+            # Use value if not NaN, otherwise use default_value
+            parameter_value = value if pd.notnull(value) else default_value
+            
+            if pd.notnull(channel):
+                try:
+                    channel = int(channel)
+                    # Initialize channel dictionary if it doesn't exist
+                    if channel not in channel_parameters:
+                        channel_parameters[channel] = {}
+                    channel_parameters[channel][parameter_name] = parameter_value
+                except ValueError:
+                    # Not a number, treat as global
+                    global_parameters[parameter_name] = parameter_value
+            else:
+                global_parameters[parameter_name] = parameter_value
+        
+        # Map string type names from CSV to actual Python types
+        dtype_map = {
+            'Integer': int,
+            'Float': float,
+        }
+
+        for _, row in parameters_df.iterrows():
+            param_name = row['parameter']
+            dtype_str = row['data_type']
+            
+            
+            cast = dtype_map.get(dtype_str)
+            if cast is None:
+                raise ValueError(f"Unsupported Data Type '{dtype_str}' for parameter '{param_name}'")
+
+        print("Channel parameters:", channel_parameters) 
+        print("Global parameters:", global_parameters)
+
+
+    def find_segmentation_channel():
+        channel_details_path = os.path.join(project_path, 'channel_details.csv')
+        try:
+            df = pd.read_csv(channel_details_path)
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Cannot find file: {channel_details_path}")
+        
+        if 'channel' not in df.columns or 'segmentation_channel' not in df.columns:
+            raise ValueError("CSV must have 'channel' and 'segmentation_channel' columns")
+        
+        segmentation_rows = df[df['segmentation_channel'] == 'yes']
+        if len(segmentation_rows) != 1:
+            raise ValueError("Must have exactly one segmentation channel marked as 'yes'")
+        
+        return segmentation_rows.index[0]
+
+    segmentation_channel_index = find_segmentation_channel()
+    print("segmentation channel is", segmentation_channel_index)
 
     # Check if project folder has TIFF files
-    tiff_files = [f for f in os.listdir(project_root) if f.lower().endswith('.tiff') or f.lower().endswith('.tif')]
+    tiff_files = [f for f in os.listdir(project_path) if f.lower().endswith('.tiff') or f.lower().endswith('.tif')]
 
     if not tiff_files:
         messagebox.showerror("Error", "No TIFF files found in the project folder.")
@@ -282,47 +334,53 @@ def load_project_data(project_root, processes):
         messagebox.showerror("Error", "Please select at least one process.")
         return
 
-    return selected_processes, parameters, nuclear_channel_index, tiff_files, total_files_to_analyse
+    return selected_processes, channel_parameters, global_parameters, segmentation_channel_index, tiff_files, total_files_to_analyse
 
-def load_image_data(tiff_path, nuclear_channel_index):
+def load_image(image_path):
     # Load the TIFF file
-    image = tifffile.imread(tiff_path)
+    image = tifffile.imread(image_path)
     print(f"Loaded image with shape: {image.shape}")
+
+    return image
+
+def preprocess(channel_slice, this_channel_parameters):
+
+    image = channel_slice.copy()
+
+    clahe_kernel_size = int(this_channel_parameters['CLAHE_kernel_size'])
+    clahe_clip_limit = float(this_channel_parameters['CLAHE_clip_limit'])
+    clahe_n_bins = int(this_channel_parameters['CLAHE_n_bins'])
     
-    # Extract nuclear channel
-    if len(image.shape) > 3:  # If multi-channel
-        nuclear_slice = image[:, nuclear_channel_index, :, :]
-    else:  # Single channel
-        nuclear_slice = image
-
-    return image, nuclear_slice
-
-def preprocess(nuclear_slice, parameters):
-
-    image = nuclear_slice
-
-    clahe_kernel_size = parameters.get('CLAHE_kernel_size', 64)
-    clahe_clip_limit = parameters.get('CLAHE_cliplimit', 0.01)
-    clahe_n_bins = parameters.get('CLAHE_n_bins', 256)
-    gaussian_kernel_size = parameters.get('gaussian_kernel_size', 3)
-    gaussian_sigma = parameters.get('gaussian_sigma', 1.0)
+    gaussian_sigma = float(this_channel_parameters['gaussian_sigma'])
+    gaussian_kernel_size = float(this_channel_parameters['gaussian_kernel_size'])
 
     def apply_gaussian(image, gaussian_sigma, gaussian_kernel_size):
         """Apply Gaussian blur and CLAHE preprocessing to image"""
         # Apply Gaussian blur
-        gaussian_blurred_image = gaussian(image, sigma=gaussian_sigma, truncate=gaussian_kernel_size)
+        print("Gaussian", image.dtype)
+
+        gaussian_blurred_image = img_as_ubyte(gaussian(
+            image,
+            sigma=gaussian_sigma,
+            truncate=gaussian_kernel_size))
         
         return gaussian_blurred_image
 
     def apply_CLAHE(image, clahe_kernel_size, clahe_clip_limit, clahe_n_bins):
         # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+
+        print("CLAHE", image.dtype)
+
         CLAHE_image = img_as_ubyte(equalize_adapthist(
-            image, 
-            kernel_size=clahe_kernel_size, 
-            clip_limit=clahe_clip_limit, 
+            image,
+            kernel_size=clahe_kernel_size,
+            clip_limit=clahe_clip_limit,
             nbins=clahe_n_bins
         ))
         
+
+        print("finished CLAHE", CLAHE_image.dtype)
+
         return CLAHE_image
 
     total_preprocessing_steps = 2
@@ -337,16 +395,20 @@ def preprocess(nuclear_slice, parameters):
 
     return image
 
-def segment_and_stitch(image, parameters):
+def segment_and_stitch(channel_slice, segmentation_parameters):
 
-    print("working")
+    cell_diameter = segmentation_parameters['cell_diameter']
+    flow_threshold = segmentation_parameters['flow_threshold']
+    cellprob_threshold = segmentation_parameters['cellprob_threshold']
+    iou_threshold = 0.5
 
-    cell_diameter = parameters.get('cell_diameter', 30)
-    flow_threshold = parameters.get('flow_threshold', 0.5)
-    cellprob_threshold = parameters.get('cellprob_threshold', 0.1)
-    iou_threshold = parameters.get('iou_threshold', 0.5)
 
-    def segment_2D(channel_slice):
+    print("Starting segmentation")
+    print(f"Cell diameter = {cell_diameter}, Flow threshold = {flow_threshold}, Cellprob threshold = {cellprob_threshold}")
+    print("IoU threshold for stitching = ", iou_threshold)
+
+
+    def segment_2D(channel_slice, cell_diameter, flow_threshold, cellprob_threshold):
         """Segment nuclei in 2D slices using Cellpose"""
         model = models.Cellpose(gpu=False, model_type='nuclei')
         
@@ -369,7 +431,6 @@ def segment_and_stitch(image, parameters):
             total_cells_segmented += len(np.unique(segmented_image_z_slice)) - 1  # Subtract 1 for background (0)
         
         print(f"Total cells segmented: {total_cells_segmented}")
-        #print(f"Cell diameter = {cell_diameter}, Flow threshold = {flow_threshold}")
                       
         return segmented_image
 
@@ -459,46 +520,70 @@ def segment_and_stitch(image, parameters):
         
         return relabeled_image
 
-    segmented_image = segment_2D(image)
-    stitched_image = stitch_by_iou(image)
+    segmented_image = segment_2D(channel_slice, cell_diameter, flow_threshold, cellprob_threshold)
+    stitched_image = stitch_by_iou(segmented_image)
     cleaned_segmented_image = clean_labels(stitched_image)
 
-    return cleaned_segmented_image
+    return segmented_image, cleaned_segmented_image
 
-def process_single_image(image, nuclear_slice, selected_processes, parameters, 
+def process_single_image(image, segmentation_channel_index, selected_processes, channel_parameters, global_parameters, 
                         output_folder, tiff_file):
     """Process a single image through the selected processing steps."""
-    preprocessed_image = None
+    preprocessed_image = image.copy()
     segmented_image = None
     file_base_name = os.path.splitext(tiff_file)[0]
+
+    preprocessed_path = os.path.join(output_folder, f"{file_base_name}_preprocessed.tiff")
+
 
     # PREPROCESSING
     if "Preprocessing" in selected_processes and not progress_dialog.is_cancelled():
         #print(f"{datetime.now():%H:%M:%S} - Starting preprocessing")
         
         # Run preprocessing
-        preprocessed_image = preprocess(nuclear_slice, parameters)
+
+        total_channels = image.shape[1] if len(image.shape) > 3 else 1
+
+        for channel in range(total_channels):
+            this_channel_parameters = channel_parameters[channel]
+            print("image shape", image.shape)
+            channel_slice = image[:, channel, :, :]
+            print("channel_slice_shape", channel_slice.shape)
+
+            preprocessed_image[:, channel, : :] = preprocess(channel_slice, this_channel_parameters)
         
         # Save preprocessed image
-        preprocessed_path = os.path.join(output_folder, f"{file_base_name}_preprocessed.tiff")
         tifffile.imwrite(preprocessed_path, preprocessed_image)
         #print(f"Saved preprocessed image to {preprocessed_path}")
+    else:
+        # Check if preprocessed file already exists and load it
+        if os.path.exists(preprocessed_path):
+            preprocessed_image = tifffile.imread(preprocessed_path)
+            print(f"Loaded existing preprocessed image from {preprocessed_path}") 
+            print("Shape", preprocessed_image.shape)       
 
     # SEGMENTATION
     if "Segmentation" in selected_processes and not progress_dialog.is_cancelled():
         #print(f"{datetime.now():%H:%M:%S} - Starting segmentation")
         
-        # Use preprocessed image if available, otherwise use raw nuclear channel
-        segmentation_input = preprocessed_image if preprocessed_image is not None else nuclear_slice
-        
+        # Use preprocessed image if available, otherwise use raw segmentation channel
+
+        if preprocessed_image is None:
+            segmentation_input = image[:, segmentation_channel_index, :, :]
+        else:
+            segmentation_input = preprocessed_image[:, segmentation_channel_index, :, :]
+
+        segmentation_parameters = global_parameters
+
         # Run segmentation
-        segmented_image = segment_and_stitch(segmentation_input, parameters)
+        raw_segmented_image, segmented_image = segment_and_stitch(segmentation_input, segmentation_parameters)
         
         # Save segmentation result if not cancelled
         if not progress_dialog.is_cancelled() and segmented_image is not None:
+            raw_segmentation_path = os.path.join(output_folder, f"{file_base_name}_raw_segmentation.tiff")
             segmentation_path = os.path.join(output_folder, f"{file_base_name}_segmentation.tiff")
             tifffile.imwrite(segmentation_path, segmented_image)
-            #print(f"Saved segmentation to {segmentation_path}")
+            tifffile.imwrite(raw_segmentation_path, raw_segmented_image)
 
     # ANALYSIS
     if "Analysis" in selected_processes and not progress_dialog.is_cancelled():
@@ -523,7 +608,7 @@ def display(image, preprocessed_image, segmented_image):
         
         napari.run()
 
-def process_all_images(project_root, selected_processes, parameters, nuclear_channel_index, 
+def process_all_images(project_path, selected_processes, channel_parameters, global_parameters, segmentation_channel_index, 
                      tiff_files, total_files):
     """Process all image files in the project."""
     
@@ -535,20 +620,21 @@ def process_all_images(project_root, selected_processes, parameters, nuclear_cha
         )
 
         # Set up paths
-        tiff_path = os.path.join(project_root, tiff_file)
-        output_folder = os.path.join(project_root, os.path.splitext(tiff_file)[0])
+        tiff_path = os.path.join(project_path, tiff_file)
+        output_folder = os.path.join(project_path, os.path.splitext(tiff_file)[0])
         
         # Create output directory
         os.makedirs(output_folder, exist_ok=True)
 
         # Load image data
-        image, nuclear_slice = load_image_data(tiff_path, nuclear_channel_index)
+        image = load_image(tiff_path)
         
         process_single_image(
-                image, 
-                nuclear_slice, 
+                image,
+                segmentation_channel_index,
                 selected_processes, 
-                parameters, 
+                channel_parameters,
+                global_parameters,
                 output_folder, 
                 tiff_file
             )
@@ -558,11 +644,11 @@ def start_analysis(processes):
 
     """Initialise and start the analysis process."""
     # Project configuration
-    project_root = "/Users/oskar/Desktop/format_test"
+    project_path = os.path.normpath(r"Y:\Room225_SharedFolder\Leica_Stellaris5_data\Gastruloids\oskar\analysis\SBSO_OPP_NM_two_analysis")
 
     # Load required data for processing
-    selected_processes, parameters, nuclear_channel_index, tiff_files, total_files = load_project_data(
-        project_root, 
+    selected_processes, channel_parameters, global_parameters, segmentation_channel_index, tiff_files, total_files = load_project_data(
+        project_path, 
         processes
     )
 
@@ -577,10 +663,11 @@ def start_analysis(processes):
     processing_thread = threading.Thread(
     target=process_all_images,
     args=
-        (project_root, 
+        (project_path, 
         selected_processes, 
-        parameters, 
-        nuclear_channel_index, 
+        channel_parameters,
+        global_parameters,        
+        segmentation_channel_index, 
         tiff_files, 
         total_files)
     )
@@ -593,18 +680,18 @@ processes = initialise_window()
 
 #%%
 #OBTAIN DATA NEEDED TO RUN DEBUGGING CELL
-project_root = "/Users/oskar/Desktop/format_test"
+project_path = os.path.normpath(r"Y:\Room225_SharedFolder\Leica_Stellaris5_data\Gastruloids\oskar\analysis\SBSO_OPP_NM_two_analysis")
 
-parameters_path = os.path.join(project_root, 'parameters_updated.csv')
+parameters_path = os.path.join(project_path, 'parameters.csv')
 if os.path.exists(parameters_path):
     parameters_df = pd.read_csv(parameters_path)
     
     # Extract parameters with correct data type
     parameters = {}
     for _, row in parameters_df.iterrows():
-        parameter_name = row['Parameter']
-        parameter_value = row['Value']
-        data_type = row['Data type']
+        parameter_name = row['parameter']
+        parameter_value = row['value']
+        data_type = row['data_type']
         
         if data_type == 'Float':
             parameters[parameter_name] = float(parameter_value)
@@ -613,7 +700,9 @@ if os.path.exists(parameters_path):
         else:
             parameters[parameter_name] = parameter_value
 
-image = tifffile.imread('/Users/oskar/Desktop/format_test/SBSO_stellaris_cropped.tiff')
+image_path = os.path.normpath(r"Y:\Room225_SharedFolder\Leica_Stellaris5_data\Gastruloids\oskar\analysis\SBSO_OPP_NM_two_analysis\replicate_1.tif")
+
+image = tifffile.imread(image_path)
 
 #%%
 #RUN ONLY DEBUGGING CELL

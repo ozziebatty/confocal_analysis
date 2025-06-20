@@ -1,6 +1,6 @@
 from datetime import datetime
 print(f"{datetime.now():%H:%M:%S} - Importing packages for characterise_cells...")
-
+import os
 import sys
 import numpy as np
 import tifffile
@@ -12,17 +12,19 @@ from collections import Counter
 from scipy.odr import ODR, Model, Data
 from sklearn.linear_model import LinearRegression
 
-debug_mode = False
+
+debug_mode = True
 
 if debug_mode == True:
-    folder_pathway = '/Users/oskar/Desktop/steventon_lab/image_analysis/imaging_data/SBSE_BMH21_analysis_thresholds'
-    file_name = 'placeholder'
+    image_path = os.path.normpath(r"Y:\Room225_SharedFolder\Leica_Stellaris5_data\Gastruloids\oskar\analysis\SBSO_OPP_NM_two_analysis\replicate_1\replicate_1_preprocessed.tiff")
+    segmented_image_path = os.path.normpath(r"Y:\Room225_SharedFolder\Leica_Stellaris5_data\Gastruloids\oskar\analysis\SBSO_OPP_NM_two_analysis\replicate_1\replicate_1_segmentation.tiff")
     cpu_num = '0'
-    channel_names = ["Sox1", "Sox2 Cyan", "Sox2 Orange", "DAPI", "Bra"]
+    #channel_names = ["Sox1", "Sox2 Cyan", "Sox2 Orange", "DAPI", "Bra"]
+    channel_names = ['channel_0', 'channel_1', 'channel_2', 'channel_3', 'channel_4']
     dapi_channel = 3
     display_napari = 'True'
 else:
-    folder_pathway = sys.argv[1]
+    folder_path = sys.argv[1]
     file_name = sys.argv[2]
     cpu_num = ''#sys.argv[3]
     channel_names = sys.argv[3]
@@ -42,10 +44,10 @@ display_colours = {
 }
 
 print(f"{datetime.now():%H:%M:%S} - Loading images...")
-image_pathway = folder_pathway + '/preprocessed' + cpu_num + '.tiff'
-segmented_image_pathway = folder_pathway + '/stitched' + cpu_num + '.tiff'
-image = tifffile.imread(image_pathway)
-segmented_image = tifffile.imread(segmented_image_pathway)
+#image_pathway = folder_pathway + '/preprocessed' + cpu_num + '.tiff'
+#segmented_image_pathway = folder_pathway + '/stitched' + cpu_num + '.tiff'
+image = tifffile.imread(image_path)
+segmented_image = tifffile.imread(segmented_image_path)
 
 print(f"{datetime.now():%H:%M:%S} - Original image shape (z, c, y, x) :", image.shape, "dtype:", image.dtype)
 print(f"{datetime.now():%H:%M:%S} - Segmented image shape (z, c, y, x) :", segmented_image.shape, "dtype:", segmented_image.dtype)
@@ -72,7 +74,7 @@ def clean_labels(segmented_image):
     return relabeled_image
     #Relabels segmented image so that every cell has a unique label and none are skipped
 
-segmented_image = clean_labels(segmented_image)
+#segmented_image = clean_labels(segmented_image)
 
 total_cells = np.max(segmented_image) + 1 #Include a background for indexing (so label 1 at position 1)
 print(total_cells , " cells to characterise")
@@ -456,14 +458,16 @@ def save_characterised_cells_to_csv(characterised_cells, file_path):
 def save_thresholds_to_csv():
 
 # Image name for this data
-    image_name = file_name
+    #image_name = file_name
 
     # File path for the CSV file
-    csv_pathway = folder_pathway + "/thresholds.csv"
+    #csv_pathway = folder_pathway + "/thresholds.csv"
+    csv_path = os.path.normpath(r"Y:\Room225_SharedFolder\Leica_Stellaris5_data\Gastruloids\oskar\analysis\SBSO_OPP_NM_two_analysis\replicate_1\replicate_1_segmentation.tiff")
+    image_name = 'replicate_1'
 
     # Check if the file exists to determine if headers need to be written
     try:
-        with open(csv_pathway, mode='x', newline='') as file:
+        with open(csv_path, mode='x', newline='') as file:
             # If the file doesn't exist, create it and add headers
             writer = csv.writer(file)
             writer.writerow(['image_name', 'channel', 'a', 'b', 'c'])
@@ -471,7 +475,7 @@ def save_thresholds_to_csv():
         pass
 
     # Append the data to the file
-    with open(csv_pathway, mode='a', newline='') as file:
+    with open(csv_path, mode='a', newline='') as file:
         writer = csv.writer(file)
         for channel, values in thresholds.items():
             a, b, c = values
@@ -481,11 +485,15 @@ z_slice_averages = find_average_z_slice_of_each_label(segmented_image)
 
 normalised_channel_values, z_slice_fluorescence = quantify_cell_fluorescence(image, segmented_image)
 
-thresholds = find_thresholds()
+csv_path = os.path.normpath(r"Y:\Room225_SharedFolder\Leica_Stellaris5_data\Gastruloids\oskar\analysis\SBSO_OPP_NM_two_analysis\replicate_1\replicate_1_characterise_cells.csv")
 
-print(thresholds)
+save_characterised_cells_to_csv(characterised_cells, csv_path)
 
-save_thresholds_to_csv()
+#thresholds = find_thresholds()
+
+#print(thresholds)
+
+#save_thresholds_to_csv()
 
 #assign_fates_by_intensity_to_threshold(characterised_cells)
 

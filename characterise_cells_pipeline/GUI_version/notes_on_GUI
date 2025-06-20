@@ -1,4 +1,25 @@
 tk box in front of the main window
 project path text box should be longer
 osnormpath normalisation to bring parity between mac and windows.
-Be able to select a folder as a project folder.
+Popup window for defining parameters to make clear am selecting sample image
+
+different channels and z and number of z/channels?
+parameters_template saved somewhere obvious.
+A way to show it is loading
+different segmentation models
+be able to copy and paste the parameters file into a different project
+cancel button or x shouldn't crash the program
+
+More sensitive lower values for parameters
+
+Integrate into run analysis
+
+Ability to run analysis from parameters file
+
+On main window should have analysis and processing separate
+
+analysis window should have better formatting
+rename to segmentation channel
+use correct parameters
+
+processing bar should be channel dependent, or do all processes per channel

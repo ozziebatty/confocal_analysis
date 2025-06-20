@@ -1,6 +1,7 @@
 #%%
 print("Importing")
 import pandas as pd
+import matplotlib
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
@@ -13,32 +14,29 @@ import matplotlib.colors as mcolors
 import json
 import os
 from datetime import datetime
-#import tkinter as tk
 from tkinter import simpledialog
 from PyQt5.QtWidgets import QApplication, QInputDialog
 import sys
 
-# One global hidden root — must happen before any other Tk usage
-#root = tk.Tk()
-#root.withdraw()
+matplotlib.use('TkAgg')  # or 'Qt5Agg'
 
 #%%
 # Load data
-file_path = "/Users/oskar/Desktop/format_test/SBSO_stellaris_data/characterised_cells.csv"
-gates_directory = "/Users/oskar/Desktop/format_test/gates"
+print("Loading data")
+file_path = os.path.normpath(r"Y:\Room225_SharedFolder\Leica_Stellaris5_data\Gastruloids\oskar\analysis\SBSO_OPP_NM_two_analysis\replicate_2\replicate_2_characterised_cells.csv")
+gates_directory = os.path.normpath(r"Y:\Room225_SharedFolder\Leica_Stellaris5_data\Gastruloids\oskar\analysis\SBSO_OPP_NM_two_analysis\replicate_2")
 df = pd.read_csv(file_path)
-print(df.columns)
 
-
-# List of channels to compare against channel_3
+columns = ['cell_number','pixel_count','z_position','channel_0','channel_1','channel_2','channel_3','channel_4']
 channels = ['channel_0', 'channel_1', 'channel_2', 'channel_3', 'channel_4']
 
 #%%
 class InteractiveScatterPlot:
-    def __init__(self, dataframe, channels, save_dir=gates_directory):
+    def __init__(self, dataframe, columns, channels, save_dir=gates_directory):
         print("Initializing InteractiveScatterPlot")
         self.df = dataframe
         self.channels = channels
+        self.columns = columns
         self.save_dir = save_dir
         
         # Create save directory
@@ -68,6 +66,7 @@ class InteractiveScatterPlot:
         self.gate_name_figure = None
         
         self.clear_gates()
+
         # Load existing gates
         self.load_gates()
         
@@ -112,7 +111,6 @@ class InteractiveScatterPlot:
         # Check for valid data ranges
         if len(x_data) > 0 and not np.all(np.isnan(x_data)):
             data_x_min, data_x_max = np.nanmin(x_data), np.nanmax(x_data)
-            # CHANGED: Add padding to ranges
             x_range = data_x_max - data_x_min
             padding = x_range * 0.1 if x_range > 0 else 1
             self.x_min = data_x_min - padding
@@ -122,7 +120,6 @@ class InteractiveScatterPlot:
             
         if len(y_data) > 0 and not np.all(np.isnan(y_data)):
             data_y_min, data_y_max = np.nanmin(y_data), np.nanmax(y_data)
-            # CHANGED: Add padding to ranges
             y_range = data_y_max - data_y_min
             padding = y_range * 0.1 if y_range > 0 else 1
             self.y_min = data_y_min - padding
@@ -144,7 +141,6 @@ class InteractiveScatterPlot:
         if self.input_population == "All":
             return self.df
         else:
-            # CHANGED: Look in both current key and "All" key for logic gates
             # First check current channel combination
             current_key = self.get_channel_key()
             if current_key in self.gates and self.input_population in self.gates[current_key]:
@@ -179,24 +175,26 @@ class InteractiveScatterPlot:
         # Create figure with smaller height
         self.fig = plt.figure(figsize=(14, 7))
         
+        #LEFT BOTTOM WIDTH HEIGHT
+
         # Main scatter plot - larger
         self.ax_main = plt.axes([0.08, 0.35, 0.55, 0.6])
         
-        # Control panel layout - top right - CHANGED: Moved everything up
-        # Channel selection dropdowns
-        self.ax_x_dropdown = plt.axes([0.68, 0.85, 0.12, 0.1])  # Moved up from 0.8
-        self.ax_y_dropdown = plt.axes([0.82, 0.85, 0.12, 0.1])  # Moved up from 0.8
-        
-        # Log scale dropdowns - CHANGED: Moved up significantly
-        self.ax_x_log_dropdown = plt.axes([0.68, 0.75, 0.12, 0.07])  # Moved up from 0.65
-        self.ax_y_log_dropdown = plt.axes([0.82, 0.75, 0.12, 0.07])  # Moved up from 0.65
-        
-        # Display proportion and population - CHANGED: Extended population box height
-        self.ax_prop_dropdown = plt.axes([0.68, 0.65, 0.12, 0.07])  # Moved up from 0.52
-        self.ax_pop_dropdown = plt.axes([0.82, 0.47, 0.12, 0.25])  # CHANGED: Much taller (was 0.08 height)
-        
-        # Gate information display - CHANGED: Squeezed spacing
-        self.ax_gate_info = plt.axes([0.68, 0.1, 0.26, 0.33])  # Adjusted height
+       # Control panel layout - top right - CHANGED: Extended axis boxes down even more, shifted everything down
+        # Channel selection dropdowns - CHANGED: Extended downward by extra 50%
+        self.ax_x_dropdown = plt.axes([0.68, 0.68, 0.12, 0.225])  # Extended from 0.15 to 0.225 height (50% more)
+        self.ax_y_dropdown = plt.axes([0.82, 0.68, 0.12, 0.225])  # Extended from 0.15 to 0.225 height (50% more)
+
+        # Log scale dropdowns - CHANGED: Shifted down more
+        self.ax_x_log_dropdown = plt.axes([0.68, 0.58, 0.12, 0.07])  # Moved down from 0.65
+        self.ax_y_log_dropdown = plt.axes([0.82, 0.58, 0.12, 0.07])  # Moved down from 0.65
+
+        # Display proportion and population - CHANGED: Shifted down more
+        self.ax_prop_dropdown = plt.axes([0.68, 0.48, 0.12, 0.07])  # Moved down from 0.55
+        self.ax_pop_dropdown = plt.axes([0.82, 0.3, 0.12, 0.25])  # Moved down from 0.37
+
+        # Gate information display - CHANGED: Shifted down more
+        self.ax_gate_info = plt.axes([0.68, 0.02, 0.26, 0.25])  # Moved down from 0.1, reduced height to fit
         
         # Range sliders - bottom left
         self.ax_x_min = plt.axes([0.08, 0.25, 0.25, 0.03])
@@ -217,10 +215,10 @@ class InteractiveScatterPlot:
         self.ax_clear_all = plt.axes([start_x + 3*(button_width + button_spacing), button_y, button_width, button_height])
         
         # Create radio button controls
-        self.radio_x = RadioButtons(self.ax_x_dropdown, channels)
-        self.radio_y = RadioButtons(self.ax_y_dropdown, channels)
-        self.radio_x.set_active(channels.index(self.x_channel))
-        self.radio_y.set_active(channels.index(self.y_channel))
+        self.radio_x = RadioButtons(self.ax_x_dropdown, columns)
+        self.radio_y = RadioButtons(self.ax_y_dropdown, columns)
+        self.radio_x.set_active(columns.index(self.x_channel))
+        self.radio_y.set_active(columns.index(self.y_channel))
         
         # Create log scale controls
         self.radio_x_log = RadioButtons(self.ax_x_log_dropdown, ['Linear', 'Log'])
@@ -335,16 +333,6 @@ class InteractiveScatterPlot:
         # Add title back
         self.ax_pop_dropdown.set_title('Population', fontsize=9, weight='bold')
 
-  
-    def on_right_click(self, event):
-        print("Handling right click")
-        """Handle right-click on gates for editing"""
-        if event.inaxes == self.ax_gate_info and hasattr(event, 'artist') and event.artist.get_gid():
-            gid = event.artist.get_gid()
-            if gid.startswith('edit_'):
-                gate_name = gid.replace('edit_', '')
-                self.show_gate_edit_menu(gate_name)
-
     def show_gate_edit_menu(self, gate_name):
         """Show gate edit menu"""
         if self.naming_mode:
@@ -352,49 +340,75 @@ class InteractiveScatterPlot:
         
         self.naming_mode = True
         
-        # Create edit dialog
+        # FIXED: Create edit dialog with proper TkAgg handling
         self.gate_name_figure = plt.figure(figsize=(6, 4))
         self.gate_name_figure.suptitle(f'Edit Gate: {gate_name}', fontsize=14, weight='bold')
         
-        # CHANGED: Add close event handler
+        # FIXED: Store references to prevent garbage collection
+        self.edit_dialog_widgets = {}
+        
         def on_edit_close(event):
             self.naming_mode = False
         self.gate_name_figure.canvas.mpl_connect('close_event', on_edit_close)
         
         # Rename section
         ax_rename_text = plt.axes([0.1, 0.6, 0.8, 0.15])
-        textbox_rename = TextBox(ax_rename_text, 'New Name: ', initial=gate_name)
+        self.edit_dialog_widgets['textbox_rename'] = TextBox(ax_rename_text, 'New Name: ', initial=gate_name)
         
         # Buttons
         ax_rename = plt.axes([0.1, 0.4, 0.25, 0.15])
         ax_delete = plt.axes([0.4, 0.4, 0.25, 0.15])
         ax_cancel = plt.axes([0.7, 0.4, 0.25, 0.15])
         
-        button_rename = Button(ax_rename, 'Rename')
-        button_delete = Button(ax_delete, 'Delete')
-        button_cancel = Button(ax_cancel, 'Cancel')
+        self.edit_dialog_widgets['button_rename'] = Button(ax_rename, 'Rename')
+        self.edit_dialog_widgets['button_delete'] = Button(ax_delete, 'Delete')
+        self.edit_dialog_widgets['button_cancel'] = Button(ax_cancel, 'Cancel')
         
         def on_rename_clicked(event):
-            new_name = textbox_rename.text.strip().replace(' ', '_')
-            if new_name and new_name != gate_name:
-                self.rename_gate(gate_name, new_name)
-            plt.close(self.gate_name_figure)
-            self.naming_mode = False
+            print("Rename button clicked")
+            try:
+                new_name = self.edit_dialog_widgets['textbox_rename'].text.strip().replace(' ', '_')
+                if new_name and new_name != gate_name:
+                    plt.close(self.gate_name_figure)
+                    self.naming_mode = False
+                    self.rename_gate(gate_name, new_name)
+                else:
+                    print("Invalid or unchanged name")
+            except Exception as e:
+                print(f"Error in rename: {e}")
         
         def on_delete_clicked(event):
-            self.delete_gate(gate_name)
-            plt.close(self.gate_name_figure)
-            self.naming_mode = False
+            print("Delete button clicked")
+            try:
+                plt.close(self.gate_name_figure)
+                self.naming_mode = False
+                self.delete_gate(gate_name)
+            except Exception as e:
+                print(f"Error in delete: {e}")
         
         def on_cancel_edit(event):
-            plt.close(self.gate_name_figure)
-            self.naming_mode = False
+            print("Cancel edit clicked")
+            try:
+                plt.close(self.gate_name_figure)
+                self.naming_mode = False
+            except Exception as e:
+                print(f"Error in cancel: {e}")
         
-        button_rename.on_clicked(on_rename_clicked)
-        button_delete.on_clicked(on_delete_clicked)
-        button_cancel.on_clicked(on_cancel_edit)
+        self.edit_dialog_widgets['button_rename'].on_clicked(on_rename_clicked)
+        self.edit_dialog_widgets['button_delete'].on_clicked(on_delete_clicked)
+        self.edit_dialog_widgets['button_cancel'].on_clicked(on_cancel_edit)
         
-        plt.show()
+        # FIXED: Force the dialog to be interactive
+        plt.show(block=False)
+        self.gate_name_figure.canvas.draw()
+        self.gate_name_figure.canvas.flush_events()
+        
+        # FIXED: Bring window to front
+        try:
+            self.gate_name_figure.canvas.manager.window.wm_attributes('-topmost', 1)
+            self.gate_name_figure.canvas.manager.window.wm_attributes('-topmost', 0)
+        except:
+            pass
                 
     def rename_gate(self, old_name, new_name):
         """Rename a gate"""
@@ -565,11 +579,17 @@ class InteractiveScatterPlot:
         
         def onselect(verts):
             self.current_vertices = list(verts)
-            print(f"Polygon selected with {len(verts)} vertices")
+            print(f"Polygon selected with {len(verts)} vertices: {verts}")
             # Note: Removed auto-save functionality - now requires manual completion
         
-        self.polygon_selector = PolygonSelector(self.ax_main, onselect, useblit=True)
-        print("Draw a polygon gate on the plot. Click 'Complete Gate' when finished.")
+        try:
+            self.polygon_selector = PolygonSelector(self.ax_main, onselect, useblit=True)
+            print("PolygonSelector created successfully")
+            print("Draw a polygon gate on the plot. Click 'Save Gate' when finished.")
+        except Exception as e:
+            print(f"ERROR creating PolygonSelector: {e}")
+            import traceback
+            traceback.print_exc()
    
     def save_gate(self, event):
         print("Saving gate")
@@ -584,110 +604,107 @@ class InteractiveScatterPlot:
         
         self.naming_mode = True
         
-        # Create a separate figure for text input
+        # FIXED: Create figure with proper event processing for TkAgg
         self.gate_name_figure = plt.figure(figsize=(6, 3))
         self.gate_name_figure.suptitle('Enter Gate Name', fontsize=14, weight='bold')
         
-        # CHANGED: Add close event handler
+        # FIXED: Store references to prevent garbage collection
+        self.gate_dialog_widgets = {}
+        
         def on_gate_name_close(event):
+            print("Gate name window closed")
             self.naming_mode = False
+            if hasattr(self, 'gate_save_completed') and not self.gate_save_completed:
+                self.current_vertices = []
+                if self.polygon_selector is not None:
+                    self.polygon_selector.disconnect_events()
+                    self.polygon_selector = None
+        
         self.gate_name_figure.canvas.mpl_connect('close_event', on_gate_name_close)
         
         # Create text input area
         ax_text = plt.axes([0.2, 0.5, 0.6, 0.15])
-        self.gate_name_textbox = TextBox(ax_text, 'Gate Name: ', initial=f"Gate_{self.gate_counter}")
+        self.gate_dialog_widgets['textbox'] = TextBox(ax_text, 'Gate Name: ', initial=f"Gate_{self.gate_counter}")
         
         # Create OK and Cancel buttons
         ax_ok = plt.axes([0.3, 0.2, 0.15, 0.15])
         ax_cancel = plt.axes([0.55, 0.2, 0.15, 0.15])
         
-        button_ok = Button(ax_ok, 'OK')
-        button_cancel = Button(ax_cancel, 'Cancel')
+        self.gate_dialog_widgets['button_ok'] = Button(ax_ok, 'OK')
+        self.gate_dialog_widgets['button_cancel'] = Button(ax_cancel, 'Cancel')
+        
+        self.gate_save_completed = False
         
         def on_ok_clicked(event):
-            gate_name = self.gate_name_textbox.text.strip()
-            if not gate_name:
-                gate_name = f"Gate_{self.gate_counter}"
-            
-            # Check if gate name already exists
-            all_gate_names = set()
-            for gates_dict in self.gates.values():
-                all_gate_names.update(gates_dict.keys())
-            
-            if gate_name in all_gate_names:
-                print(f"Warning: Gate '{gate_name}' already exists. Overwriting...")
-            
-            self.complete_gate_save(gate_name)
-            plt.close(self.gate_name_figure)
-            self.naming_mode = False
+            print("OK button clicked - processing...")
+            try:
+                gate_name = self.gate_dialog_widgets['textbox'].text.strip()
+                if not gate_name:
+                    gate_name = f"Gate_{self.gate_counter}"
+                
+                print(f"Gate name: {gate_name}")
+                
+                # Check if gate name already exists
+                all_gate_names = set()
+                for gates_dict in self.gates.values():
+                    all_gate_names.update(gates_dict.keys())
+                
+                if gate_name in all_gate_names:
+                    print(f"Warning: Gate '{gate_name}' already exists. Overwriting...")
+                
+                self.gate_save_completed = True
+                
+                # Close dialog first
+                plt.close(self.gate_name_figure)
+                self.naming_mode = False
+                
+                # Then save gate
+                self.complete_gate_save(gate_name)
+                
+            except Exception as e:
+                print(f"Error in on_ok_clicked: {e}")
+                import traceback
+                traceback.print_exc()
         
         def on_cancel_clicked(event):
-            print("Gate creation cancelled")
-            plt.close(self.gate_name_figure)
-            self.naming_mode = False
-            # Clear current vertices
-            self.current_vertices = []
-            if self.polygon_selector is not None:
-                self.polygon_selector.disconnect_events()
-                self.polygon_selector = None
+            print("Cancel button clicked - processing...")
+            try:
+                self.gate_save_completed = False
+                
+                # Clear current vertices
+                self.current_vertices = []
+                if self.polygon_selector is not None:
+                    self.polygon_selector.disconnect_events()
+                    self.polygon_selector = None
+                
+                plt.close(self.gate_name_figure)
+                self.naming_mode = False
+                print("Gate creation cancelled")
+                
+            except Exception as e:
+                print(f"Error in on_cancel_clicked: {e}")
+                import traceback
+                traceback.print_exc()
         
-        button_ok.on_clicked(on_ok_clicked)
-        button_cancel.on_clicked(on_cancel_clicked)
+        # FIXED: Connect events and force event processing
+        self.gate_dialog_widgets['button_ok'].on_clicked(on_ok_clicked)
+        self.gate_dialog_widgets['button_cancel'].on_clicked(on_cancel_clicked)
         
-        plt.show()
+        # FIXED: Force the dialog to be interactive
+        plt.show(block=False)  # Non-blocking show
+        self.gate_name_figure.canvas.draw()
+        self.gate_name_figure.canvas.flush_events()
+        
+        # FIXED: Bring window to front (TkAgg specific)
+        try:
+            self.gate_name_figure.canvas.manager.window.wm_attributes('-topmost', 1)
+            self.gate_name_figure.canvas.manager.window.wm_attributes('-topmost', 0)
+        except:
+            pass
         
     def on_main_window_close(self, event):
         """Reset naming mode when main window is closed"""
         self.naming_mode = False
-
-    def auto_save_gate(self):
-        print("Auto-saving gate")
-        """Automatically save the gate when polygon is complete"""
-        if len(self.current_vertices) < 3:
-            return
-        
-        # Generate automatic gate name
-        gate_name = f"Gate_{self.gate_counter}"
-        self.gate_counter += 1
-        
-        # Convert vertices from plot coordinates to original coordinates
-        original_vertices = []
-        for plot_x, plot_y in self.current_vertices:
-            orig_x = 10**(plot_x) - self.epsilon if self.x_log else plot_x
-            orig_y = 10**(plot_y) - self.epsilon if self.y_log else plot_y
-            original_vertices.append([orig_x, orig_y])
-        
-        # Store the gate
-        key = self.get_channel_key()
-        if key not in self.gates:
-            self.gates[key] = {}
-        
-        self.gates[key][gate_name] = {
-            'type': 'polygon',
-            'vertices': original_vertices,
-            'x_channel': self.x_channel,
-            'y_channel': self.y_channel,
-            'x_log': self.x_log,
-            'y_log': self.y_log,
-            'created': datetime.now().isoformat()
-        }
-        
-        # Save gates and calculate statistics
-        self.save_gates()
-        self.calculate_and_save_gate_stats(gate_name, key)
-        
-        # Update population dropdown
-        self.update_population_dropdown()
-        
-        # Clear current selection
-        self.current_vertices = []
-        if self.polygon_selector is not None:
-            self.polygon_selector.disconnect_events()
-            self.polygon_selector = None
-        
-        # Update plot
-        self.update_plot()
-        print(f"Gate '{gate_name}' saved automatically")
         
     def create_logic_gate(self, event):
         print("Creating logic gate")
@@ -708,11 +725,13 @@ class InteractiveScatterPlot:
         self.naming_mode = True
         gate_list = list(sorted(all_gates))
         
-        # Create a separate figure for logic gate creation
+        # FIXED: Create logic gate dialog with proper TkAgg handling
         self.gate_name_figure = plt.figure(figsize=(10, 6))
         self.gate_name_figure.suptitle('Create Logic Gate', fontsize=14, weight='bold')
         
-        # CHANGED: Add close event handler
+        # FIXED: Store references to prevent garbage collection
+        self.logic_dialog_widgets = {}
+        
         def on_logic_gate_close(event):
             self.naming_mode = False
         self.gate_name_figure.canvas.mpl_connect('close_event', on_logic_gate_close)
@@ -725,98 +744,120 @@ class InteractiveScatterPlot:
         # Gate 1 selection
         ax_gate1 = plt.axes([0.1, 0.7, 0.35, 0.2])
         ax_gate1.set_title('Select First Gate', fontsize=10, weight='bold')
-        radio_gate1 = RadioButtons(ax_gate1, gate_list)
-        radio_gate1.set_active(0)
+        self.logic_dialog_widgets['radio_gate1'] = RadioButtons(ax_gate1, gate_list)
+        self.logic_dialog_widgets['radio_gate1'].set_active(0)
         
         def on_gate1_select(label):
             selected_gate1[0] = label
-        radio_gate1.on_clicked(on_gate1_select)
+        self.logic_dialog_widgets['radio_gate1'].on_clicked(on_gate1_select)
         
         # Operation selection
         operations = ['AND', 'OR', 'AND NOT', 'OR NOT', 'NOT']
         ax_operation = plt.axes([0.55, 0.7, 0.35, 0.2])
         ax_operation.set_title('Select Operation', fontsize=10, weight='bold')
-        radio_operation = RadioButtons(ax_operation, operations)
-        radio_operation.set_active(0)
+        self.logic_dialog_widgets['radio_operation'] = RadioButtons(ax_operation, operations)
+        self.logic_dialog_widgets['radio_operation'].set_active(0)
         
         def on_operation_select(label):
             selected_operation[0] = label
-        radio_operation.on_clicked(on_operation_select)
+        self.logic_dialog_widgets['radio_operation'].on_clicked(on_operation_select)
         
         # Gate 2 selection (for AND/OR operations)
         ax_gate2 = plt.axes([0.1, 0.45, 0.35, 0.2])
         ax_gate2.set_title('Select Second Gate (if needed)', fontsize=10, weight='bold')
-        radio_gate2 = RadioButtons(ax_gate2, gate_list)
-        radio_gate2.set_active(0)
+        self.logic_dialog_widgets['radio_gate2'] = RadioButtons(ax_gate2, gate_list)
+        self.logic_dialog_widgets['radio_gate2'].set_active(0)
         
         def on_gate2_select(label):
             selected_gate2[0] = label
-        radio_gate2.on_clicked(on_gate2_select)
+        self.logic_dialog_widgets['radio_gate2'].on_clicked(on_gate2_select)
         
         # Gate name input
         ax_name = plt.axes([0.1, 0.3, 0.8, 0.08])
-        textbox_name = TextBox(ax_name, 'Logic Gate Name: ', initial=f"Logic_{self.gate_counter}")
+        self.logic_dialog_widgets['textbox_name'] = TextBox(ax_name, 'Logic Gate Name: ', initial=f"Logic_{self.gate_counter}")
         
         # Buttons
         ax_ok = plt.axes([0.3, 0.1, 0.15, 0.1])
         ax_cancel = plt.axes([0.55, 0.1, 0.15, 0.1])
         
-        button_ok = Button(ax_ok, 'Create')
-        button_cancel = Button(ax_cancel, 'Cancel')
+        self.logic_dialog_widgets['button_ok'] = Button(ax_ok, 'Create')
+        self.logic_dialog_widgets['button_cancel'] = Button(ax_cancel, 'Cancel')
         
         def on_create_clicked(event):
-            gate1 = selected_gate1[0]
-            operation = selected_operation[0]
-            
-            # Fixed logic expression creation
-            if operation == 'NOT':
-                logic_expr = f"NOT {gate1}"
-            elif operation == 'AND NOT':
-                gate2 = selected_gate2[0]
-                logic_expr = f"{gate1} AND NOT {gate2}"
-            elif operation == 'OR NOT':
-                gate2 = selected_gate2[0]
-                logic_expr = f"{gate1} OR NOT {gate2}"
-            else:  # AND or OR
-                gate2 = selected_gate2[0]
-                logic_expr = f"{gate1} {operation} {gate2}"
-            
-            gate_name = textbox_name.text.strip()
-            if not gate_name:
-                gate_name = f"Logic_{self.gate_counter}"
-            
-            # Handle spaces in gate names by replacing with underscores
-            gate_name = gate_name.replace(' ', '_')
-            
-            # Check if gate name already exists
-            all_existing_gates = set()
-            for gates_dict in self.gates.values():
-                all_existing_gates.update(gates_dict.keys())
-            
-            if gate_name in all_existing_gates:
-                print(f"Gate name '{gate_name}' already exists. Please choose a different name.")
-                return
-            
-            # Create the logic gate
-            self.create_logical_gate(gate_name, logic_expr)
-            
-            # Update population dropdown
-            self.update_population_dropdown()
-            
-            plt.close(self.gate_name_figure)
-            self.naming_mode = False
-            print(f"Logic gate '{gate_name}' created: {logic_expr}")
+            print("Create logic gate clicked")
+            try:
+                gate1 = selected_gate1[0]
+                operation = selected_operation[0]
+                
+                # Fixed logic expression creation
+                if operation == 'NOT':
+                    logic_expr = f"NOT {gate1}"
+                elif operation == 'AND NOT':
+                    gate2 = selected_gate2[0]
+                    logic_expr = f"{gate1} AND NOT {gate2}"
+                elif operation == 'OR NOT':
+                    gate2 = selected_gate2[0]
+                    logic_expr = f"{gate1} OR NOT {gate2}"
+                else:  # AND or OR
+                    gate2 = selected_gate2[0]
+                    logic_expr = f"{gate1} {operation} {gate2}"
+                
+                gate_name = self.logic_dialog_widgets['textbox_name'].text.strip()
+                if not gate_name:
+                    gate_name = f"Logic_{self.gate_counter}"
+                
+                # Handle spaces in gate names by replacing with underscores
+                gate_name = gate_name.replace(' ', '_')
+                
+                # Check if gate name already exists
+                all_existing_gates = set()
+                for gates_dict in self.gates.values():
+                    all_existing_gates.update(gates_dict.keys())
+                
+                if gate_name in all_existing_gates:
+                    print(f"Gate name '{gate_name}' already exists. Please choose a different name.")
+                    return
+                
+                plt.close(self.gate_name_figure)
+                self.naming_mode = False
+                
+                # Create the logic gate
+                self.create_logical_gate(gate_name, logic_expr)
+                
+                # Update population dropdown
+                self.update_population_dropdown()
+                
+                print(f"Logic gate '{gate_name}' created: {logic_expr}")
+                
+            except Exception as e:
+                print(f"Error creating logic gate: {e}")
+                import traceback
+                traceback.print_exc()
         
         def on_cancel_logic(event):
-            plt.close(self.gate_name_figure)
-            self.naming_mode = False
-            print("Logic gate creation cancelled")
+            print("Cancel logic gate clicked")
+            try:
+                plt.close(self.gate_name_figure)
+                self.naming_mode = False
+                print("Logic gate creation cancelled")
+            except Exception as e:
+                print(f"Error cancelling: {e}")
         
-        button_ok.on_clicked(on_create_clicked)
-        button_cancel.on_clicked(on_cancel_logic)
+        self.logic_dialog_widgets['button_ok'].on_clicked(on_create_clicked)
+        self.logic_dialog_widgets['button_cancel'].on_clicked(on_cancel_logic)
         
-        plt.show()
-    
+        # FIXED: Force the dialog to be interactive
+        plt.show(block=False)
+        self.gate_name_figure.canvas.draw()
+        self.gate_name_figure.canvas.flush_events()
+        
+        # FIXED: Bring window to front
+        try:
+            self.gate_name_figure.canvas.manager.window.wm_attributes('-topmost', 1)
+            self.gate_name_figure.canvas.manager.window.wm_attributes('-topmost', 0)
+        except:
+            pass
+
     def create_logical_gate(self, gate_name, logic_expr):
         print("Creating logical gate")
         """Create a gate based on logical expression"""
@@ -834,8 +875,8 @@ class InteractiveScatterPlot:
                 self.gates[key][gate_name] = {
                     'type': 'logic',
                     'expression': logic_expr,
-                    'x_channel': None,  # Logic gates aren't tied to specific channels
-                    'y_channel': None,
+                    'x_axis': None,  # Logic gates aren't tied to specific channels
+                    'y_axis': None,
                     'x_log': None,
                     'y_log': None,
                     'created': datetime.now().isoformat()
@@ -1024,56 +1065,103 @@ class InteractiveScatterPlot:
     
     def complete_gate_save(self, gate_name):
         """Complete the gate saving process with the given name"""
+        print(f"Starting complete_gate_save for: {gate_name}")
+        print(f"Current vertices: {self.current_vertices}")
+        print(f"X channel: {self.x_channel}, Y channel: {self.y_channel}")
+        print(f"X log: {self.x_log}, Y log: {self.y_log}")
+        
         # Handle spaces in gate names by replacing with underscores
         gate_name = gate_name.replace(' ', '_')
         
         self.gate_counter += 1
         
-        # CHANGED: Properly handle coordinate transformation for log/linear changes
-        # Store vertices in both original and plot coordinates
+        # Check if we have vertices
+        if not self.current_vertices:
+            print("ERROR: No vertices to save!")
+            return
+        
+        # CHANGED: Add error handling for coordinate transformation
         original_vertices = []
         plot_vertices = []
         
-        for plot_x, plot_y in self.current_vertices:
-            # Store plot coordinates (for current display)
-            plot_vertices.append([plot_x, plot_y])
+        try:
+            for plot_x, plot_y in self.current_vertices:
+                # Store plot coordinates (for current display)
+                plot_vertices.append([plot_x, plot_y])
+                
+                # Convert to original coordinates with error handling
+                try:
+                    if self.x_log:
+                        if plot_x <= 0:  # Check for invalid log values
+                            print(f"WARNING: Invalid log value for x: {plot_x}")
+                            orig_x = plot_x  # Use as-is if invalid
+                        else:
+                            orig_x = 10**(plot_x) - self.epsilon
+                    else:
+                        orig_x = plot_x
+                    
+                    if self.y_log:
+                        if plot_y <= 0:  # Check for invalid log values
+                            print(f"WARNING: Invalid log value for y: {plot_y}")
+                            orig_y = plot_y  # Use as-is if invalid
+                        else:
+                            orig_y = 10**(plot_y) - self.epsilon
+                    else:
+                        orig_y = plot_y
+                    
+                    original_vertices.append([orig_x, orig_y])
+                    print(f"Converted ({plot_x}, {plot_y}) -> ({orig_x}, {orig_y})")
+                    
+                except Exception as coord_error:
+                    print(f"ERROR converting coordinates ({plot_x}, {plot_y}): {coord_error}")
+                    # Fallback: use plot coordinates as original
+                    original_vertices.append([plot_x, plot_y])
             
-            # Convert to original coordinates
-            orig_x = 10**(plot_x) - self.epsilon if self.x_log else plot_x
-            orig_y = 10**(plot_y) - self.epsilon if self.y_log else plot_y
-            original_vertices.append([orig_x, orig_y])
+            print(f"Final original vertices: {original_vertices}")
+            
+        except Exception as e:
+            print(f"ERROR in coordinate conversion: {e}")
+            return
         
         # Store the gate
         key = self.get_channel_key()
         if key not in self.gates:
             self.gates[key] = {}
         
-        self.gates[key][gate_name] = {
-            'type': 'polygon',
-            'vertices': original_vertices,  # Always store in original coordinates
-            'x_channel': self.x_channel,
-            'y_channel': self.y_channel,
-            'x_log': self.x_log,
-            'y_log': self.y_log,
-            'created': datetime.now().isoformat()
-        }
-        
-        # Save gates and calculate statistics
-        self.save_gates()
-        self.calculate_and_save_gate_stats(gate_name, key)
-        
-        # Update population dropdown
-        self.update_population_dropdown()
-        
-        # Clear current selection
-        self.current_vertices = []
-        if self.polygon_selector is not None:
-            self.polygon_selector.disconnect_events()
-            self.polygon_selector = None
-        
-        # Update plot
-        self.update_plot()
-        print(f"Gate '{gate_name}' saved successfully")
+        try:
+            self.gates[key][gate_name] = {
+                'type': 'polygon',
+                'vertices': original_vertices,  # Always store in original coordinates
+                'x_channel': self.x_channel,
+                'y_channel': self.y_channel,
+                'x_log': self.x_log,
+                'y_log': self.y_log,
+                'created': datetime.now().isoformat()
+            }
+            
+            print(f"Gate stored successfully: {gate_name}")
+            
+            # Save gates and calculate statistics
+            self.save_gates()
+            self.calculate_and_save_gate_stats(gate_name, key)
+            
+            # Update population dropdown
+            self.update_population_dropdown()
+            
+            # Clear current selection
+            self.current_vertices = []
+            if self.polygon_selector is not None:
+                self.polygon_selector.disconnect_events()
+                self.polygon_selector = None
+            
+            # Update plot
+            self.update_plot()
+            print(f"Gate '{gate_name}' saved successfully")
+            
+        except Exception as e:
+            print(f"ERROR saving gate: {e}")
+            import traceback
+            traceback.print_exc()
 
     def load_gates(self):
         print("Loading gates")
@@ -1303,15 +1391,6 @@ class InteractiveScatterPlot:
         self.slider_y_max.valmin, self.slider_y_max.valmax = self.y_min, self.y_max
         self.slider_y_min.set_val(self.y_min)
         self.slider_y_max.set_val(self.y_max)
-        
-    def on_gate_name_change(self, text):
-        print("Changing gate name")
-        """Handle gate name input change"""
-        self.gate_name_input = text.strip()
-        if not self.gate_name_input:
-            self.gate_name_input = f"Gate_{self.gate_counter}"
-            self.gate_counter += 1
-        self.text_gate_name.set_val(self.gate_name_input)
 
     def on_gate_info_click(self, event):
         """Handle clicks on gate info panel"""
@@ -1385,17 +1464,19 @@ class InteractiveScatterPlot:
             self.naming_mode = False
             return
         
-        # Create data display window - CHANGED: Smaller height
+        # FIXED: Create data display window with proper TkAgg handling
         self.gate_data_figure = plt.figure(figsize=(10, 6))
         self.gate_data_figure.suptitle(f'Data Analysis: {gate_name}', fontsize=14, weight='bold')
         
-        # CHANGED: Add close event handler
+        # FIXED: Store reference to prevent garbage collection
+        self.data_dialog_widgets = {}
+        
         def on_data_close(event):
             self.naming_mode = False
         self.gate_data_figure.canvas.mpl_connect('close_event', on_data_close)
         
         # Create text display area
-        ax_data = plt.axes([0.1, 0.15, 0.8, 0.75])  # CHANGED: Adjusted for smaller window
+        ax_data = plt.axes([0.1, 0.15, 0.8, 0.75])
         ax_data.axis('off')
         
         # Calculate statistics
@@ -1409,7 +1490,7 @@ class InteractiveScatterPlot:
         data_text += f"Points: {points_inside:,} / {total_points:,} ({percentage:.2f}%)\n\n"
         
         if gate_info['type'] == 'polygon':
-            data_text += f"Channels: {gate_info['x_channel']} vs {gate_info['y_channel']}\n"
+            data_text += f"Axes: {gate_info['x_channel']} vs {gate_info['y_channel']}\n"
             data_text += f"Log Scale: X={gate_info['x_log']}, Y={gate_info['y_log']}\n"
             data_text += f"Vertices ({len(gate_info['vertices'])}):\n"
             for i, (x, y) in enumerate(gate_info['vertices']):
@@ -1419,7 +1500,7 @@ class InteractiveScatterPlot:
         
         data_text += "\nChannel Statistics (Mean ± Std):\n"
         
-        # Calculate channel statistics - CHANGED: Save to gate info
+        # Calculate channel statistics
         channel_stats = {}
         for channel in self.channels:
             if len(gate_data) > 0:
@@ -1432,7 +1513,7 @@ class InteractiveScatterPlot:
                 channel_stats[channel] = {'mean': 0.0, 'std': 0.0}
                 data_text += f"  {channel}: No data\n"
         
-        # CHANGED: Save data analysis to gate info
+        # Save data analysis to gate info
         gate_info['data_analysis'] = {
             'points_inside': int(points_inside),
             'total_points': int(total_points),
@@ -1449,20 +1530,34 @@ class InteractiveScatterPlot:
                     fontsize=10, verticalalignment='top', fontfamily='monospace')
         
         # Add close button
-        ax_close = plt.axes([0.45, 0.02, 0.1, 0.08])  # CHANGED: Adjusted for smaller window
-        button_close = Button(ax_close, 'Close')
+        ax_close = plt.axes([0.45, 0.02, 0.1, 0.08])
+        self.data_dialog_widgets['button_close'] = Button(ax_close, 'Close')
         
         def on_close_data(event):
-            plt.close(self.gate_data_figure)
-            self.naming_mode = False
+            print("Close data window clicked")
+            try:
+                plt.close(self.gate_data_figure)
+                self.naming_mode = False
+            except Exception as e:
+                print(f"Error closing data window: {e}")
         
-        button_close.on_clicked(on_close_data)
+        self.data_dialog_widgets['button_close'].on_clicked(on_close_data)
         
-        plt.show()
+        # FIXED: Force the dialog to be interactive
+        plt.show(block=False)
+        self.gate_data_figure.canvas.draw()
+        self.gate_data_figure.canvas.flush_events()
+        
+        # FIXED: Bring window to front
+        try:
+            self.gate_data_figure.canvas.manager.window.wm_attributes('-topmost', 1)
+            self.gate_data_figure.canvas.manager.window.wm_attributes('-topmost', 0)
+        except:
+            pass
 
 #%%
 # Create and show the interactive plot
-interactive_plot = InteractiveScatterPlot(df, channels)
+interactive_plot = InteractiveScatterPlot(df, columns, channels)
 interactive_plot.show()
 
 # %%
