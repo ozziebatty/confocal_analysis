@@ -22,23 +22,27 @@ matplotlib.use('TkAgg')  # or 'Qt5Agg'
 
 #%%
 # Load data
-replicate_number = 1
+
+replicate_number = 3
 replicate_string = f"replicate_{replicate_number}"  # or "replicate_" + str(replicate_number)
 print("Loading data for replicate_", replicate_number)
 
-project_path = os.path.normpath(r"Y:\Room225_SharedFolder\Leica_Stellaris5_data\Gastruloids\oskar\analysis\SBSO_OPP_NM_two_analysis")
+#project_path = os.path.normpath(r"Y:\Room225_SharedFolder\Leica_Stellaris5_data\Gastruloids\oskar\analysis\SBSO_OPP_NM_two_analysis")
+project_path = os.path.normpath(r'/Users/oskar/Desktop/SBSO_analysis')
+
 channel_details_path = os.path.join(project_path, 'channel_details.csv')
 replicate_path = os.path.join(project_path, replicate_string)
-characterised_cells_path = os.path.join(replicate_path, f"{replicate_string}_characterised_cells.csv")
-gates_path = os.path.join(replicate_path, 'gates')
+characterised_cells_path = os.path.join(replicate_path, f"normalised_characterised_cells_{replicate_string}.csv")
+gates_path = os.path.join(replicate_path, 'normalised_gates')
 df = pd.read_csv(characterised_cells_path)
 
 columns = ['cell_number','pixel_count','z_position','channel_0','channel_1','channel_2','channel_3','channel_4']
 channels = ['channel_0', 'channel_1', 'channel_2', 'channel_3', 'channel_4']
 
 # Load channel names as a list
-channel_df = pd.read_csv(channel_details_path)
-channel_names = channel_df['channel'].tolist()
+#channel_df = pd.read_csv(channel_details_path)
+#channel_names = channel_df['channel'].tolist()
+channel_names = ['DAPI', 'Bra', 'Sox1', 'OPP', 'Sox2']
 
 print("Channel names:", channel_names)
 

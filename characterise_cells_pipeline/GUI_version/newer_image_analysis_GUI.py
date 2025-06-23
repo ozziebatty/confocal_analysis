@@ -301,15 +301,542 @@ class ImageAnalysisApp:
         tk.Button(button_frame, text="Save", command=save_processes, width=10).pack(side=tk.LEFT, padx=5)
 
     def define_parameters_window(self):
-        """Define processing parameters using Napari interface"""
-        if not self.project_path:
+
+        project_path = self.project_path
+
+        # ====== STEP 1: FILE PATHS AND ERROR CHECKING ======
+        if not project_path:
             messagebox.showerror("Error", "Please load a project first.")
             return
         
-        # This would contain your existing define_parameters_window code
-        # For now, just show a placeholder
-        messagebox.showinfo("Parameters", "Parameters definition window would open here.\nThis requires Napari and the full parameter definition code.")
+        print("PROJECT PATH - ", project_path)
 
+        input_image_path = filedialog.askopenfilename(title="Select Sample Image File")
+        input_parameters_path = os.path.join(project_path, 'parameters_template.csv')
+        output_parameters_path = os.path.join(project_path, 'parameters.csv')
+
+        print("IMPORTING PACKAGES...")
+        from skimage.exposure import equalize_adapthist
+        from skimage import img_as_ubyte
+        import napari
+        from magicgui import magicgui
+        from cv2 import GaussianBlur
+        from magicgui.widgets import Container, CheckBox
+        from cellpose import models
+        from skimage.segmentation import find_boundaries
+
+
+        # Store current slice information as global variables for easy access
+        current_z = 0
+        #current_channel = 0
+        changed_channel = False
+        
+        segmentation_selected = True
+
+        # ====== STEP 2: LOAD DATA ======
+        print("INPUT IMAGE PATH - ", input_image_path)
+        try:
+            # Load image
+            print("Loading image...")
+            image = tifffile.imread(input_image_path)
+            print("Successfully loaded")
+            
+            # What datatype?
+            print(image.min())
+            print(image.max())
+            
+            print("Image loaded with shape (z, c, y, x):", image.shape, "dtype:", image.dtype)
+            
+            if len(image.shape) != 4:
+                raise ValueError(f"Expected 4D image (z, c, y, x), got shape {image.shape}")
+            
+            total_z = image.shape[0]
+            total_channels = image.shape[1]
+            min_xy_size = min(image.shape[2], image.shape[3])
+            
+            # Load parameters file
+            try:
+                parameters_df = pd.read_csv(input_parameters_path)
+                required_columns = ['parameter', 'process', 'channel', 'default_value', 'min', 'max', 'data_type', 'must_be_odd']
+                if not all(col in parameters_df.columns for col in required_columns):
+                    raise ValueError(f"Parameters CSV must contain columns: {required_columns}")
+            except Exception as e:
+                raise ValueError(f"Error loading parameters CSV file: {str(e)}")
+                
+            # Define available processes (instead of loading from file)
+            available_processes = ['CLAHE', 'Gaussian']
+                
+        except Exception as e:
+            print(f"Error during initialization: {str(e)}")
+            print(image.shape)
+            raise
+
+    # Dictionary to store current parameter values
+        channel_parameters = {}
+        global_parameters = {}
+
+        # Dictionary to store process selection state
+        process_enabled = {process: False for process in available_processes}
+
+        # Initialize parameter values from the CSV
+        for _, row in parameters_df.iterrows():
+            parameter_name = row['parameter']
+            channel = row['channel']
+            default_value = row['default_value']
+            parameter_value = default_value
+            # Use default if value is NaN
+            
+            if pd.notnull(channel):
+                try:
+                    channel = int(channel)
+                    if channel not in channel_parameters:
+                        channel_parameters[channel] = {}
+                    channel_parameters[channel][parameter_name] = parameter_value
+                except ValueError:
+                    # Not a number, treat as global
+                    global_parameters[parameter_name] = parameter_value
+            else:
+                global_parameters[parameter_name] = parameter_value
+        
+        # Extract min and max values for each parameter from CSV
+        # Map string type names from CSV to actual Python types
+        dtype_map = {
+            'Integer': int,
+            'Float': float,
+        }
+
+        param_min_max = {}
+
+        for _, row in parameters_df.iterrows():
+            param_name = row['parameter']
+            dtype_str = row['data_type']
+            
+            
+            cast = dtype_map.get(dtype_str)
+            if cast is None:
+                raise ValueError(f"Unsupported Data Type '{dtype_str}' for parameter '{param_name}'")
+
+            # Safely cast min/max using the type
+            try:
+                min_val = cast(row['min'])
+                max_val = cast(row['max'])
+            except Exception as e:
+                raise ValueError(f"Error casting min/max for parameter '{param_name}': {e}")
+
+            param_min_max[param_name] = {'min': min_val, 'max': max_val}
+            
+        print("Parameter min/max values:", param_min_max)
+        print("Channel parameters:", channel_parameters) 
+        print("Global parameters:", global_parameters)
+
+        def find_segmentation_channel():
+            channel_details_path = os.path.join(project_path, 'channel_details.csv')
+            try:
+                df = pd.read_csv(channel_details_path)
+            except FileNotFoundError:
+                raise FileNotFoundError(f"Cannot find file: {channel_details_path}")
+            
+            if 'channel' not in df.columns or 'segmentation_channel' not in df.columns:
+                raise ValueError("CSV must have 'channel' and 'segmentation_channel' columns")
+            
+            segmentation_rows = df[df['segmentation_channel'] == 'yes']
+            if len(segmentation_rows) != 1:
+                raise ValueError("Must have exactly one segmentation channel marked as 'yes'")
+            
+            return segmentation_rows.index[0]
+
+        segmentation_channel = find_segmentation_channel()
+        print("segmentation channel is", segmentation_channel)
+
+            
+        # ====== STEP 3: DEFINE PROCESSING FUNCTIONS ======
+        def apply_CLAHE(image_slice, kernel_size=16, clip_limit=0.005, n_bins=11):
+            """Apply Contrast Limited Adaptive Histogram Equalization"""
+            try:
+                # Ensure parameters are valid
+                kernel_size = max(3, int(kernel_size))
+                clip_limit = max(0.001, float(clip_limit))
+                return img_as_ubyte(equalize_adapthist(image_slice, 
+                                                    kernel_size=(kernel_size, kernel_size), 
+                                                    clip_limit=clip_limit,
+                                                    nbins=n_bins))
+            except Exception as e:
+                print(f"Error applying CLAHE: {str(e)}")
+                return image_slice
+
+        def apply_Gaussian(image_slice, kernel_size=11, sigma=0.4):
+            """Apply Gaussian blur"""
+            try:
+                # Ensure kernel size is valid and odd
+                kernel_size = max(3, int(kernel_size))
+                if kernel_size % 2 == 0:
+                    kernel_size += 1
+                sigma = max(0.1, float(sigma))
+                return GaussianBlur(image_slice, ksize=(kernel_size, kernel_size), sigmaX=sigma)
+            except Exception as e:
+                print(f"Error applying Gaussian: {str(e)}")
+                return image_slice
+
+        def apply_segmentation(image_slice, cell_diameter=8.0, flow_threshold=0.5, cellprob_threshold=0.5):
+            """Apply Cellpose segmentation"""
+            try:
+                print("Applying segmentation with parameters:")
+                print(f"- Cell diameter: {cell_diameter}")
+                print(f"- Flow threshold: {flow_threshold}")
+                print(f"- Cell probability threshold: {cellprob_threshold}")
+                
+                # Create model - use 'nuclei' for nuclear segmentation
+                model = models.Cellpose(gpu=False, model_type='nuclei')
+                
+                # Run segmentation
+                masks, flows, styles, diams = model.eval(
+                    image_slice,
+                    diameter=cell_diameter,
+                    flow_threshold=flow_threshold,
+                    cellprob_threshold=cellprob_threshold,
+                )
+                
+                # Create cell outlines (1-pixel thick)
+                cell_outlines = find_boundaries(masks, mode='inner', background=0)
+                
+                print(f"Segmentation complete! Found {np.max(masks)} cells/nuclei")
+                return masks, cell_outlines
+            except Exception as e:
+                print(f"Error during segmentation: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                # Return empty mask with same shape as input
+                return np.zeros_like(image_slice), np.zeros_like(image_slice)
+
+        # ====== STEP 4: CREATE NAPARI VIEWER ======
+        viewer = napari.Viewer()
+
+        # ====== STEP 5: PREPROCESSING FUNCTION ======
+        def apply_preprocessing(current_z, current_channel):
+            """Apply selected preprocessing steps to the current slice"""
+            global processed_slice, processed_segmentation_slice
+            
+            try:
+                # Get the original slice using global variables
+                original_slice = image[current_z, current_channel, :, :]
+                processed_slice = original_slice.copy()
+                
+                # Get selected processes from the global process_enabled dictionary
+                selected_processes = [process for process, enabled in process_enabled.items() if enabled]
+
+                # Safely get channel-specific parameters, fallback to empty dict
+                this_channel_parameters = channel_parameters.get(current_channel, {})
+
+                # Apply processing steps
+                for process in selected_processes:
+                    if process == 'CLAHE':
+                        kernel_size = int(this_channel_parameters.get('CLAHE_kernel_size', 16))
+                        clip_limit = float(this_channel_parameters.get('CLAHE_clip_limit', 0.005))
+                        n_bins = int(this_channel_parameters.get('CLAHE_n_bins', 11))
+                        processed_slice = apply_CLAHE(processed_slice, kernel_size, clip_limit, n_bins)
+                        
+                    elif process == 'Gaussian':
+                        kernel_size = int(this_channel_parameters.get('gaussian_kernel_size', 11))
+                        sigma = float(this_channel_parameters.get('gaussian_sigma', 0.4))
+                        processed_slice = apply_Gaussian(processed_slice, kernel_size, sigma)
+            
+                # Store the processed image for segmentation
+                if current_channel == segmentation_channel:
+                    processed_segmentation_slice = processed_slice
+                
+                # Update viewer
+                if "Preprocessed" in viewer.layers:
+                    viewer.layers["Preprocessed"].data = processed_slice
+                else:
+                    viewer.add_image(processed_slice, name="Preprocessed")
+
+                return processed_slice
+            except Exception as e:
+                print(f"Error during preprocessing: {str(e)}")
+                return False
+        
+        # ====== STEP 6: SLICE SELECTION WIDGET ======
+        @magicgui(
+            z_slice={"label": "Z slice", "widget_type": "Slider", "min": 0, "max": total_z-1},
+            channel={"label": "Channel", "widget_type": "Slider", "min": 0, "max": total_channels-1}, auto_call=True
+        )
+        def update_slice(z_slice=1, channel=0):
+            """Select a z-slice and channel to view"""
+            global current_z, current_channel, changed_channel
+            
+            # Update global variables
+            previous_channel = -1
+            current_z = z_slice
+            current_channel = channel
+
+            if current_channel != previous_channel:
+                changed_channel = True
+            #print("Current channel when updating:", current_channel)
+            
+            # Get the original slice
+            original_slice = image[z_slice, channel, :, :]
+        
+            # Update viewer
+            if "unprocessed" in viewer.layers:
+                viewer.layers["unprocessed"].data = original_slice
+            else:
+                viewer.add_image(original_slice, name="unprocessed")
+                
+            # Automatically apply preprocessing after changing slice
+            processed_slice = apply_preprocessing(current_z, current_channel)
+            
+            update_sliders(current_channel)
+
+            return processed_slice
+
+        def refresh_current_slice():
+            """Refresh the current slice without changing z or channel"""
+            global current_z, current_channel
+            
+            # Use current global values, with fallbacks
+            z_slice = current_z if 'current_z' in globals() else 1
+            channel = current_channel if 'current_channel' in globals() else 0
+            
+            # Get the original slice
+            original_slice = image[z_slice, channel, :, :]
+
+            # Update viewer
+            if "unprocessed" in viewer.layers:
+                viewer.layers["unprocessed"].data = original_slice
+            else:
+                viewer.add_image(original_slice, name="unprocessed")
+            
+            # Automatically apply preprocessing after changing slice
+            processed_slice = apply_preprocessing(current_z, current_channel)
+        
+            update_sliders(current_channel)
+            return processed_slice
+
+        # ====== STEP 7: CREATE PARAMETER WIDGETS ======
+        # Process selection widget
+        process_container = Container(layout="vertical")
+
+        # Function to handle process checkbox changes
+        def on_process_toggle(process_name, value):
+            process_enabled[process_name] = value
+            # Apply preprocessing to update the image
+            refresh_current_slice()
+
+        # Add checkboxes for each process
+        for process in available_processes:
+            checkbox = CheckBox(name=f"Enable {process}", value=process_enabled[process])
+            # Use lambda with default args to avoid late binding issues
+            checkbox.changed.connect(lambda v, p=process: on_process_toggle(p, v))
+            process_container.append(checkbox)
+
+        # Combined parameters widget for all processing techniques
+        def processing_parameters_function(
+            clahe_kernel_size=None,
+            clahe_clip_limit=None,
+            clahe_n_bins=None,
+            gaussian_kernel_size=None,
+            gaussian_sigma=None,
+        ):
+            try:
+                # Add a flag to prevent processing during slider updates
+                global changed_channel, updating_sliders
+                
+                # Skip processing if we're currently updating sliders
+                if updating_sliders:
+                    return True
+
+                if changed_channel == True:
+                    clahe_kernel_size = channel_parameters[current_channel]['CLAHE_kernel_size']
+                    clahe_clip_limit = channel_parameters[current_channel]['CLAHE_clip_limit']
+                    clahe_n_bins = channel_parameters[current_channel]['CLAHE_n_bins']
+                    gaussian_kernel_size = channel_parameters[current_channel]['gaussian_kernel_size']
+                    gaussian_sigma = channel_parameters[current_channel]['gaussian_sigma']
+                    changed_channel = False
+
+                # Store updated CLAHE parameters
+                else:
+                    channel_parameters[current_channel]['CLAHE_kernel_size'] = clahe_kernel_size
+                    channel_parameters[current_channel]['CLAHE_clip_limit'] = clahe_clip_limit
+                    channel_parameters[current_channel]['CLAHE_n_bins'] = clahe_n_bins
+                    channel_parameters[current_channel]['gaussian_kernel_size'] = gaussian_kernel_size
+                    channel_parameters[current_channel]['gaussian_sigma'] = gaussian_sigma
+
+                # Apply preprocessing using updated parameters
+                refresh_current_slice()
+
+                return True
+
+            except Exception as e:
+                print(f"Error updating parameters: {str(e)}")
+                return False
+
+
+        processing_parameters = magicgui(
+                # CLAHE parameters
+                clahe_kernel_size={"label": "CLAHE Kernel Size", "widget_type": "Slider", 
+                                "min": param_min_max['CLAHE_kernel_size']['min'], "max": min_xy_size, "step": 1},
+                clahe_clip_limit={"label": "CLAHE Clip Limit", "widget_type": "FloatSlider", 
+                                "min": param_min_max['CLAHE_clip_limit']['min'], "max": param_min_max['CLAHE_clip_limit']['max'], "step": 0.01},
+                clahe_n_bins={"label": "CLAHE n bins", "widget_type": "Slider", 
+                                "min": param_min_max['CLAHE_n_bins']['min'], "max": param_min_max['CLAHE_n_bins']['max'], "step": 1},
+
+                # Gaussian parameters
+                gaussian_kernel_size={"label": "Gaussian Kernel Size", "widget_type": "Slider", 
+                                    "min": param_min_max['gaussian_kernel_size']['min'], "max": min_xy_size, "step": 2},
+                gaussian_sigma={"label": "Gaussian Sigma", "widget_type": "FloatSlider", 
+                            "min": param_min_max['gaussian_sigma']['min'], "max": param_min_max['gaussian_sigma']['max'], "step": 0.001},
+                auto_call=True
+            )(processing_parameters_function)
+
+        def update_sliders(current_channel):
+            global updating_sliders
+                    
+            # Set flag to prevent processing during updates
+            updating_sliders = True
+            
+            try:
+                processing_parameters['clahe_kernel_size'].value = channel_parameters[current_channel]['CLAHE_kernel_size']
+                processing_parameters['clahe_clip_limit'].value = channel_parameters[current_channel]['CLAHE_clip_limit']
+                processing_parameters['clahe_n_bins'].value = channel_parameters[current_channel]['CLAHE_n_bins']
+                processing_parameters['gaussian_kernel_size'].value = channel_parameters[current_channel]['gaussian_kernel_size']
+                processing_parameters['gaussian_sigma'].value = channel_parameters[current_channel]['gaussian_sigma']
+            finally:
+                # Always reset the flag, even if there's an error
+                updating_sliders = False
+
+        # Initialize the flag
+        updating_sliders = False
+
+        # ====== STEP 8: SEGMENTATION WIDGET AND FUNCTION ======
+        # Segmentation widget without run button
+        if segmentation_selected == True:
+            # Get min/max values for segmentation parameters
+            
+            cell_diameter_min = param_min_max['cell_diameter']['min']
+            cell_diameter_max = param_min_max['cell_diameter']['max']
+            
+            flow_threshold_min = param_min_max['flow_threshold']['min']
+            flow_threshold_max = param_min_max['flow_threshold']['max']
+            
+            cell_probability_threshold_min = param_min_max['cellprob_threshold']['min']
+            cell_probability_threshold_max = param_min_max['cellprob_threshold']['max']
+            
+            @magicgui(
+                cell_diameter={"label": "Cell diameter", "widget_type": "FloatSlider", 
+                            "min": cell_diameter_min, "max": cell_diameter_max, "step": 0.5},
+                flow_threshold={"label": "Flow threshold", "widget_type": "FloatSlider", 
+                            "min": flow_threshold_min, "max": flow_threshold_max, "step": 0.01},
+                cellprob_threshold={"label": "Cell probability threshold", "widget_type": "FloatSlider", 
+                                "min": cell_probability_threshold_min, "max": cell_probability_threshold_max, "step": 0.1}
+            )
+            def segmentation_widget(cell_diameter=8.0, flow_threshold=0.5, cellprob_threshold=0.5):
+                """Set parameters for Cellpose segmentation"""
+                try:
+                    # Store parameters
+                    global_parameters['cell_diameter'] = cell_diameter
+                    global_parameters['flow_threshold'] = flow_threshold
+                    global_parameters['cellprob_threshold'] = cellprob_threshold
+                    
+                    # Run segmentation with new parameters
+                    run_segmentation()
+                    
+                    return True
+                except Exception as e:
+                    print(f"Error setting segmentation parameters: {str(e)}")
+                    return False
+            
+            # Function to actually run the segmentation
+            def run_segmentation():
+                global current_z
+                """Run Cellpose segmentation on the current image"""
+                # Get parameters
+                cell_diameter = float(global_parameters['cell_diameter'])
+                flow_threshold = float(global_parameters['flow_threshold'])
+                cellprob_threshold = float(global_parameters['cellprob_threshold'])
+                
+                # Get the current processed image
+                print("Segmenting on z-slice:", current_z, "channel:", segmentation_channel)
+                if processed_slice is None:
+                    image_to_segment = update_slice(z_slice=current_z, channel=segmentation_channel)
+                else:
+                    image_to_segment = apply_preprocessing(current_z, segmentation_channel)
+
+                # Apply segmentation
+                masks, outlines = apply_segmentation(image_to_segment, cell_diameter, flow_threshold, cellprob_threshold)
+                
+                # Add or update segmentation layers
+                if "Segmentation" in viewer.layers:
+                    viewer.layers["Segmentation"].data = masks
+                else:
+                    # Add as labels layer with random colors
+                    viewer.add_labels(masks, name="Segmentation", visible=False)
+                
+                # Add or update cell outlines layer
+                if "Cell Outlines" in viewer.layers:
+                    viewer.layers["Cell Outlines"].data = outlines
+                else:
+                    # Add binary outlines as labels layer
+                    viewer.add_labels(outlines.astype(np.uint8), name="Cell Outlines")
+                
+                print("Segmentation complete")
+
+        # ====== STEP 9: SAVE PARAMETERS FUNCTION ======
+        @magicgui(call_button="Save Parameters")
+        def save_parameters():
+            # Create a copy of the original dataframe to preserve structure
+            updated_df = parameters_df.copy()
+            
+            # Update the 'Default Value' column with current values
+            for index, row in updated_df.iterrows():
+                parameter_name = row['parameter']
+                channel = row['channel']
+                
+                # Check if this is a channel-specific parameter
+                if pd.notnull(channel):
+                    try:
+                        channel_num = int(channel)
+                        if channel_num in channel_parameters and parameter_name in channel_parameters[channel_num]:
+                            updated_df.at[index, 'value'] = channel_parameters[channel_num][parameter_name]
+                    except ValueError:
+                        # Not a valid channel number, check global parameters
+                        if parameter_name in global_parameters:
+                            updated_df.at[index, 'value'] = global_parameters[parameter_name]
+                else:
+                    # Global parameter
+                    if parameter_name in global_parameters:
+                        updated_df.at[index, 'value'] = global_parameters[parameter_name]
+            
+            # Save to CSV
+            try:
+                updated_df.to_csv(output_parameters_path, index=False)
+                print(f"Parameters successfully saved to {output_parameters_path}")
+            except Exception as e:
+                print(f"Error saving parameters to CSV: {str(e)}")
+                raise
+
+        # ====== STEP 10: ADD WIDGETS TO VIEWER ======
+        # Add the slice selection
+        viewer.window.add_dock_widget(update_slice, name="Z-slice and Channel")
+
+        # Add the process selection widget
+        viewer.window.add_dock_widget(process_container, name="Preprocessing")
+
+        # Add the parameters widget
+        viewer.window.add_dock_widget(processing_parameters, name="Preprocessing Parameters")
+
+        # Add segmentation widget
+        if segmentation_selected == True:
+            viewer.window.add_dock_widget(segmentation_widget, name="Segmentation")
+
+        # Add save button - keeping this button as saving should be deliberate
+        viewer.window.add_dock_widget(save_parameters, name="Save Parameters")
+
+        # Initialize the view with the first slice
+        update_slice(z_slice=0, channel=0)
+
+        # Start the application
+        napari.run()
+        
     def run_analysis_window(self):
         """Run the complete analysis pipeline"""
         if not self.project_path:
