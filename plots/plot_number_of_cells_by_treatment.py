@@ -4,6 +4,8 @@ import numpy as np
 
 print("Running")
 
+"Reads in characterised_cells, plots total number of cells by treatment as boxplots"
+
 # Load data
 csv_pathway = '/Users/oskar/Desktop/BMH21_image_analysis/SBSE_control/results/characterised_cells_summary_by_cell_type.csv'
 data = pd.read_csv(csv_pathway)

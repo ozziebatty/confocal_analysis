@@ -1,0 +1,6 @@
+Category,Process,Selected
+Preprocessing,CLAHE,Yes
+Preprocessing,Gaussian,No
+Preprocessing,Rolling Ball,No
+Analysis,Intensity Analysis,No
+Analysis,Shape Analysis,No
